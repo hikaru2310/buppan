@@ -6,8 +6,8 @@ __pycache__/
 # 収集データ・Chromeプロファイル・DB（個人データなのでコミットしない）
 data/
 
-# ローカル設定（Chromeプロファイルのパス等を含む）。共有用は config.example.yaml
-config.yaml
+# このPC専用の設定（Chromeプロファイルのパス等）
+config.local.yaml
 
 # その他
 backup/

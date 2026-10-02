@@ -26,6 +26,13 @@
 | Web画面（ダッシュボード・候補一覧＋内訳・収益機会マップ・資本シミュレーター・仕入れキュー＋CSV・ルール表示） | `flipbot/web.py` / `flipbot/web/index.html` |
 | サンプルデータ（実サイトが取れない時の代替・デモ） | `flipbot/fixtures/sample.json` |
 
+## いちばん簡単な使い方
+
+1. GitHub（https://github.com/hikaru2310/buppan ）で `config.yaml` などを編集して保存（Commit changes）
+2. Mac で `start.command` をダブルクリック → 最新版を取り込んで起動し、ブラウザが開きます
+
+このPC専用の設定（Chromeプロファイルのパス等）は `config.local.yaml` に書きます。GitHubには上がりません。
+
 ## セットアップ
 
 ```bash
@@ -33,7 +40,6 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python -m playwright install chromium
-cp config.example.yaml config.yaml
 mkdir -p data
 ```
 

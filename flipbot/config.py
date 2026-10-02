@@ -117,7 +117,18 @@ class Config(BaseModel):
         return [*self.genres, *self.targets]
 
 
+def _deep_merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
+    out = dict(base)
+    for k, v in over.items():
+        out[k] = _deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
 def load_config(path: Union[str, Path]) -> Config:
+    """config.yaml（GitHubで共有）に、同じ場所の config.local.yaml（このPC専用・非共有）を上書きして読む。"""
     p = Path(path)
     data: dict[str, Any] = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    local = p.with_name("config.local.yaml")
+    if local.exists():
+        data = _deep_merge(data, yaml.safe_load(local.read_text(encoding="utf-8")) or {})
     return Config.model_validate(data)
