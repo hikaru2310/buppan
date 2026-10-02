@@ -1,0 +1,66 @@
+app:
+  db_path: "./data/flips.db"
+  # 実Chromeプロファイル利用時は UA 上書きをオフ（バージョン不一致でブロックされやすい）
+  use_config_user_agent: true
+  # 同梱Chromiumではなく、インストール済み Google Chrome で起動
+  browser_channel: null
+  strip_playwright_automation_args: true
+  user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+  headless: true
+  slow_mo_ms: 0
+  # 起動中のChromeへ接続する場合（Chromeを --remote-debugging-port=9222 で起動してから設定）
+  chrome_cdp_url: null
+  # Use your existing Google Chrome profile (logged-in).
+  user_data_dir: null
+  chrome_profile_directory: null
+  poll_interval_seconds: 900  # 15 minutes
+  # live: 実サイト収集 / sample: 同梱サンプル / auto: 実サイトが0件ならサンプルで代替
+  data_source: auto
+  web_host: "127.0.0.1"
+  web_port: 8000
+  # 何時間以内に新しく現れた出品を NEW とするか
+  new_window_hours: 24
+
+# ジャンル定義（監視対象）。旧 targets: 形式もそのまま使えます。
+genres:
+  - id: "gbl-astroboy-box-mint"
+    name: "ゲームボーイライト アストロボーイ（箱あり・美品）"
+    genre: "ゲーム機・レトロゲーム"
+    mercari_query: "ゲームボーイライト アストロボーイ 箱 美品"
+    ebay_query: "Game Boy Light Astro Boy box"
+    # メルカリ側タイトルにこの語のどれかが無ければ除外（空なら制限なし）
+    include_keywords: []
+    # このジャンルだけの除外語（全体の exclude_keywords に追加）
+    exclude_keywords: []
+    # 梱包・雑費
+    extra_buy_cost_jpy: 200
+    # eBay販売時の国際送料（日本→海外の概算）
+    shipping_cost_jpy: 2500
+    # ジャンル別の下限（未指定なら thresholds の値）
+    # min_profit_jpy: 3000
+    # min_roi: 0.25
+
+fx:
+  # 為替（JPY→USD）
+  jpy_per_usd: 150.0
+
+fees:
+  mercari:
+    buyer_fee_jpy: 0
+    buyer_fee_rate: 0.0
+  ebay:
+    # eBay Final Value Fee（カテゴリ平均。ジャンル別に final_value_fee_rate で上書き可）
+    final_value_fee_rate: 0.1325
+    payment_fixed_fee_usd: 0.30
+    # Payoneer / Wise の USD→JPY 換金スプレッド
+    payout_fx_spread_rate: 0.02
+
+# 候補に載せる基準
+thresholds:
+  min_profit_jpy: 2000
+  min_roi: 0.20          # 利益 ÷ 総原価
+  match_threshold: 0.55  # Mercari品 ↔ eBay成約品の一致スコア（0〜1）
+  min_comps: 2           # 相場算出に必要なマッチ件数
+
+# 全ジャンル共通の除外語
+exclude_keywords: ["ジャンク", "部品取り", "動作未確認", "難あり", "空箱", "箱のみ"]

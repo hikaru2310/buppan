@@ -1,0 +1,356 @@
+{
+ "genres": [
+  {
+   "id": "retro-gb",
+   "name": "ゲームボーイ（初代）",
+   "genre": "ゲーム機・レトロゲーム",
+   "mercari_query": "ゲームボーイ 本体 DMG-01",
+   "ebay_query": "Game Boy DMG-01 console",
+   "shipping_cost_jpy": 1800,
+   "extra_buy_cost_jpy": 100
+  },
+  {
+   "id": "retro-gbasp",
+   "name": "ゲームボーイアドバンスSP",
+   "genre": "ゲーム機・レトロゲーム",
+   "mercari_query": "ゲームボーイアドバンスSP AGS-101",
+   "ebay_query": "Game Boy Advance SP AGS-101",
+   "shipping_cost_jpy": 1800,
+   "extra_buy_cost_jpy": 100
+  },
+  {
+   "id": "gbl-astroboy",
+   "name": "ゲームボーイライト アストロボーイ",
+   "genre": "ゲーム機・レトロゲーム",
+   "mercari_query": "ゲームボーイライト アストロボーイ",
+   "ebay_query": "Game Boy Light Astro Boy",
+   "shipping_cost_jpy": 2500,
+   "extra_buy_cost_jpy": 200
+  },
+  {
+   "id": "famicom",
+   "name": "ファミコン本体",
+   "genre": "ゲーム機・レトロゲーム",
+   "mercari_query": "ファミコン 本体",
+   "ebay_query": "Famicom console HVC-001",
+   "shipping_cost_jpy": 2800,
+   "extra_buy_cost_jpy": 150
+  },
+  {
+   "id": "switch-oled",
+   "name": "Switch 有機ELモデル",
+   "genre": "ゲーム機・現行",
+   "mercari_query": "Switch 有機ELモデル ホワイト",
+   "ebay_query": "Nintendo Switch OLED white",
+   "shipping_cost_jpy": 4800,
+   "extra_buy_cost_jpy": 200,
+   "min_roi": 0.1
+  },
+  {
+   "id": "nikon-d750",
+   "name": "Nikon D750",
+   "genre": "カメラ・レンズ",
+   "mercari_query": "Nikon D750 ボディ",
+   "ebay_query": "Nikon D750 body",
+   "shipping_cost_jpy": 3600,
+   "extra_buy_cost_jpy": 300
+  },
+  {
+   "id": "canon-5d4",
+   "name": "Canon EOS 5D Mark IV",
+   "genre": "カメラ・レンズ",
+   "mercari_query": "Canon EOS 5D Mark IV",
+   "ebay_query": "Canon EOS 5D Mark IV body",
+   "shipping_cost_jpy": 3600,
+   "extra_buy_cost_jpy": 300
+  },
+  {
+   "id": "gshock-gwf",
+   "name": "G-SHOCK フロッグマン",
+   "genre": "腕時計",
+   "mercari_query": "G-SHOCK フロッグマン GWF-A1000",
+   "ebay_query": "Casio G-Shock Frogman GWF-A1000",
+   "shipping_cost_jpy": 2200,
+   "extra_buy_cost_jpy": 150
+  }
+ ],
+ "mercari": {
+  "retro-gb": [
+   {
+    "title": "任天堂 ゲームボーイ 本体 DMG-01 動作確認済 送料込み",
+    "price_jpy": 3500,
+    "shipping_included": true,
+    "item_id": "sample-retro-gb-0"
+   },
+   {
+    "title": "ゲームボーイ DMG-01 本体 グレー 美品",
+    "price_jpy": 4800,
+    "shipping_included": true,
+    "item_id": "sample-retro-gb-1"
+   },
+   {
+    "title": "ゲームボーイ 本体 ジャンク 部品取り DMG-01",
+    "price_jpy": 900,
+    "shipping_included": true,
+    "item_id": "sample-retro-gb-2"
+   },
+   {
+    "title": "ゲームボーイ ソフト まとめ 10本",
+    "price_jpy": 3000,
+    "shipping_included": true,
+    "item_id": "sample-retro-gb-3"
+   }
+  ],
+  "retro-gbasp": [
+   {
+    "title": "ゲームボーイアドバンスSP AGS-101 バックライト 美品",
+    "price_jpy": 6800,
+    "shipping_included": true,
+    "item_id": "sample-retro-gbasp-0"
+   },
+   {
+    "title": "ゲームボーイアドバンスSP AGS-101 パールブルー 箱付き",
+    "price_jpy": 9800,
+    "shipping_included": true,
+    "item_id": "sample-retro-gbasp-1"
+   },
+   {
+    "title": "ゲームボーイアドバンスSP AGS-001 本体",
+    "price_jpy": 4200,
+    "shipping_included": true,
+    "item_id": "sample-retro-gbasp-2"
+   }
+  ],
+  "gbl-astroboy": [
+   {
+    "title": "ゲームボーイライト アストロボーイ 限定 箱 説明書あり 美品",
+    "price_jpy": 38000,
+    "shipping_included": true,
+    "item_id": "sample-gbl-astroboy-0"
+   },
+   {
+    "title": "ゲームボーイライト アストロボーイ 本体のみ",
+    "price_jpy": 24000,
+    "shipping_included": true,
+    "item_id": "sample-gbl-astroboy-1"
+   }
+  ],
+  "famicom": [
+   {
+    "title": "ファミコン 本体 ジャンク 動作未確認",
+    "price_jpy": 1500,
+    "shipping_included": false,
+    "item_id": "sample-famicom-0"
+   },
+   {
+    "title": "任天堂 ファミコン 本体 HVC-001 動作品 AV化",
+    "price_jpy": 9800,
+    "shipping_included": true,
+    "item_id": "sample-famicom-1"
+   }
+  ],
+  "switch-oled": [
+   {
+    "title": "Nintendo Switch 有機ELモデル ホワイト 美品",
+    "price_jpy": 32000,
+    "shipping_included": true,
+    "item_id": "sample-switch-oled-0"
+   },
+   {
+    "title": "Nintendo Switch 有機ELモデル ホワイト 新品未使用",
+    "price_jpy": 36800,
+    "shipping_included": true,
+    "item_id": "sample-switch-oled-1"
+   }
+  ],
+  "nikon-d750": [
+   {
+    "title": "Nikon D750 ボディ シャッター数少 元箱付 美品",
+    "price_jpy": 52000,
+    "shipping_included": true,
+    "item_id": "sample-nikon-d750-0"
+   },
+   {
+    "title": "ニコン D750 ボディ 動作品",
+    "price_jpy": 61000,
+    "shipping_included": true,
+    "item_id": "sample-nikon-d750-1"
+   }
+  ],
+  "canon-5d4": [
+   {
+    "title": "Canon EOS 5D Mark IV ボディ 美品",
+    "price_jpy": 168000,
+    "shipping_included": true,
+    "item_id": "sample-canon-5d4-0"
+   }
+  ],
+  "gshock-gwf": [
+   {
+    "title": "カシオ G-SHOCK フロッグマン GWF-A1000 チタン",
+    "price_jpy": 32500,
+    "shipping_included": true,
+    "item_id": "sample-gshock-gwf-0"
+   },
+   {
+    "title": "G-SHOCK GWF-A1000-1AJF フロッグマン 美品",
+    "price_jpy": 29800,
+    "shipping_included": true,
+    "item_id": "sample-gshock-gwf-1"
+   }
+  ]
+ },
+ "ebay": {
+  "retro-gb": [
+   {
+    "title": "Nintendo Game Boy DMG-01 Original Console Tested Working",
+    "price_usd": 79,
+    "shipping_usd": 0
+   },
+   {
+    "title": "Nintendo Game Boy DMG-01 Console Original Gray Tested",
+    "price_usd": 85,
+    "shipping_usd": 0
+   },
+   {
+    "title": "Nintendo Game Boy Original DMG-01 Gray Console Japan",
+    "price_usd": 72,
+    "shipping_usd": 9.5
+   },
+   {
+    "title": "Nintendo Game Boy Advance SP AGS-101 Backlit",
+    "price_usd": 150,
+    "shipping_usd": 0
+   }
+  ],
+  "retro-gbasp": [
+   {
+    "title": "Nintendo Game Boy Advance SP AGS-101 Backlit Pearl Blue",
+    "price_usd": 148,
+    "shipping_usd": 0
+   },
+   {
+    "title": "Game Boy Advance SP AGS-101 Brighter Console Tested",
+    "price_usd": 155,
+    "shipping_usd": 0
+   },
+   {
+    "title": "Nintendo GBA SP AGS-101 Backlit Japan Import",
+    "price_usd": 139,
+    "shipping_usd": 12
+   },
+   {
+    "title": "Game Boy Advance SP AGS-001 Console",
+    "price_usd": 88,
+    "shipping_usd": 0
+   }
+  ],
+  "gbl-astroboy": [
+   {
+    "title": "Game Boy Light Astro Boy Limited Edition with box",
+    "price_usd": 520,
+    "shipping_usd": 0
+   },
+   {
+    "title": "Nintendo Game Boy Light Astro Boy Console CIB",
+    "price_usd": 560,
+    "shipping_usd": 25
+   },
+   {
+    "title": "Game Boy Light Astro Boy console only",
+    "price_usd": 330,
+    "shipping_usd": 15
+   },
+   {
+    "title": "Game Boy Light Astro Boy box manual Japan",
+    "price_usd": 495,
+    "shipping_usd": 20
+   }
+  ],
+  "famicom": [
+   {
+    "title": "Nintendo Famicom Console HVC-001 AV Mod Tested",
+    "price_usd": 165,
+    "shipping_usd": 0
+   },
+   {
+    "title": "Famicom HVC-001 Console AV Modded Japan",
+    "price_usd": 149,
+    "shipping_usd": 20
+   },
+   {
+    "title": "Famicom console junk for parts",
+    "price_usd": 35,
+    "shipping_usd": 15
+   }
+  ],
+  "switch-oled": [
+   {
+    "title": "Nintendo Switch OLED Model White Console",
+    "price_usd": 305,
+    "shipping_usd": 0
+   },
+   {
+    "title": "Nintendo Switch OLED White Japan Version",
+    "price_usd": 289,
+    "shipping_usd": 0
+   },
+   {
+    "title": "Nintendo Switch Lite Gray",
+    "price_usd": 160,
+    "shipping_usd": 0
+   }
+  ],
+  "nikon-d750": [
+   {
+    "title": "Nikon D750 24.3MP Digital SLR Camera Body Only",
+    "price_usd": 670,
+    "shipping_usd": 0
+   },
+   {
+    "title": "Nikon D750 Body Low Shutter Count",
+    "price_usd": 690,
+    "shipping_usd": 0
+   },
+   {
+    "title": "Nikon D750 DSLR Body Excellent",
+    "price_usd": 640,
+    "shipping_usd": 0
+   },
+   {
+    "title": "Nikon D7500 Body",
+    "price_usd": 520,
+    "shipping_usd": 0
+   }
+  ],
+  "canon-5d4": [
+   {
+    "title": "Canon EOS 5D Mark IV Body",
+    "price_usd": 1180,
+    "shipping_usd": 0
+   },
+   {
+    "title": "Canon EOS 5D Mark IV DSLR Body Only",
+    "price_usd": 1150,
+    "shipping_usd": 0
+   }
+  ],
+  "gshock-gwf": [
+   {
+    "title": "Casio G-Shock Frogman GWF-A1000-1A Titanium",
+    "price_usd": 395,
+    "shipping_usd": 0
+   },
+   {
+    "title": "G-Shock Frogman GWF-A1000 Solar Diver",
+    "price_usd": 410,
+    "shipping_usd": 0
+   },
+   {
+    "title": "Casio G-Shock GWF-1000 Frogman",
+    "price_usd": 260,
+    "shipping_usd": 0
+   }
+  ]
+ }
+}

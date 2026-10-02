@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Arbiter 物販コンソール</title>
+<style>
+:root{
+  --bg:#f6f4ef; --panel:#ffffff; --panel-2:#f1ede4; --line:#e3ded2;
+  --ink:#1c1a17; --ink-2:#46423b; --ink-3:#7c766a; --ink-4:#b0aa9d;
+  --profit:#2f7a4f; --profit-bg:#e6f1ea; --risk:#b3412f; --risk-bg:#f7e7e3;
+  --accent:#3b4a8c; --accent-bg:#e8eaf4; --new:#b07a12; --new-bg:#f8eed6;
+  --serif:"Hiragino Mincho ProN","Yu Mincho","Noto Serif JP",serif;
+  --sans:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#171614; --panel:#201f1c; --panel-2:#2a2824; --line:#36332e;
+    --ink:#f1ede4; --ink-2:#d2ccbf; --ink-3:#9a9385; --ink-4:#6b665c;
+    --profit:#6cc08f; --profit-bg:#1f3227; --risk:#e2806f; --risk-bg:#3a231f;
+    --accent:#9aa8e8; --accent-bg:#252a42; --new:#e3b456; --new-bg:#3a3020;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13.5px;line-height:1.6}
+a{color:var(--accent)}
+.app{display:grid;grid-template-columns:232px 1fr;min-height:100vh}
+aside{border-right:1px solid var(--line);padding:20px 14px;position:sticky;top:0;height:100vh;overflow:auto;background:var(--panel)}
+.brand{display:flex;gap:10px;align-items:center;padding:0 8px 18px;border-bottom:1px solid var(--line);margin-bottom:12px}
+.brand .logo{width:32px;height:32px;border:1.5px solid var(--ink);display:grid;place-items:center;font-family:var(--serif);font-size:18px}
+.brand b{font-family:var(--serif);font-size:18px;font-weight:600;display:block;line-height:1.1}
+.brand small{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;color:var(--ink-3)}
+.navsec{font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--ink-3);padding:14px 10px 6px}
+nav button{display:flex;justify-content:space-between;width:100%;border:0;background:none;color:var(--ink-2);text-align:left;padding:8px 10px;border-radius:5px;cursor:pointer;font:inherit}
+nav button:hover{background:var(--panel-2)}
+nav button.on{background:var(--accent-bg);color:var(--accent);font-weight:600}
+nav .cnt{font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+main{padding:0 32px 60px;min-width:0}
+.top{position:sticky;top:0;z-index:5;background:var(--bg);display:flex;gap:10px;align-items:center;padding:14px 0;border-bottom:1px solid var(--line)}
+.crumb{font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--ink-3);flex:1}
+.top input{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px;padding:7px 10px;width:260px;font:inherit}
+.btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px;padding:7px 14px;cursor:pointer;font:inherit;white-space:nowrap;text-decoration:none;display:inline-block}
+.btn:hover{border-color:var(--ink-3)}
+.btn.dark{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.btn.buy{background:var(--risk);color:#fff;border-color:var(--risk);font-weight:600}
+.btn.sm{padding:4px 10px;font-size:12px}
+.btn:disabled{opacity:.5;cursor:default}
+h1{font-family:var(--serif);font-weight:600;font-size:36px;line-height:1.3;margin:28px 0 8px;letter-spacing:.01em}
+.lead{color:var(--ink-2);max-width:760px;margin:0 0 20px}
+h2{font-family:var(--serif);font-weight:600;font-size:20px;margin:30px 0 12px;display:flex;gap:10px;align-items:baseline}
+h2 .no{font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+h2 .sub{font-family:var(--sans);font-size:12px;font-weight:400;color:var(--ink-3)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 6px}
+.chip{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:4px 12px;font-size:12px;color:var(--ink-2)}
+.chip b{color:var(--ink)}
+.chip.sample{background:var(--new-bg);border-color:transparent;color:var(--new)}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line);background:var(--panel);border-radius:8px}
+.kpi{padding:16px 20px;border-left:1px solid var(--line)}
+.kpi:first-child{border-left:0}
+.kpi .l{font-size:11.5px;color:var(--ink-3);display:flex;justify-content:space-between}
+.kpi .l span{font-family:var(--mono);font-size:10px;letter-spacing:.12em}
+.kpi .v{font-family:var(--serif);font-size:32px;font-weight:600;margin:6px 0 2px}
+.kpi .v small{font-size:14px;color:var(--ink-3);margin-left:3px}
+.kpis.sim .v{font-size:24px}
+.kpi .s{font-size:11.5px;color:var(--ink-3)}
+.card{border:1px solid var(--line);background:var(--panel);border-radius:8px;overflow:hidden}
+table{width:100%;border-collapse:collapse}
+th{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;color:var(--ink-3);font-weight:500;text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:12px;border-bottom:1px solid var(--line);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.title{font-weight:500;color:var(--ink)}
+.wide{overflow-x:auto}
+td.item{min-width:260px}
+.meta{font-size:11.5px;color:var(--ink-3)}
+.tag{display:inline-block;white-space:nowrap;font-size:10.5px;padding:1px 7px;border-radius:4px;background:var(--panel-2);color:var(--ink-2);margin-right:4px}
+.tag.new{background:var(--new-bg);color:var(--new);font-weight:700;letter-spacing:.06em}
+.pos{color:var(--profit);font-weight:600}
+.neg{color:var(--risk);font-weight:600}
+.big{font-family:var(--serif);font-size:18px}
+.bar{display:inline-block;width:46px;height:5px;background:var(--panel-2);border-radius:3px;vertical-align:middle;margin-right:6px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent)}
+.detail td{background:var(--panel-2)}
+.bd{display:grid;grid-template-columns:minmax(260px,420px) 1fr;gap:28px}
+.bd dl{display:grid;grid-template-columns:1fr auto;margin:0;gap:4px 16px}
+.bd dt{color:var(--ink-3)} .bd dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
+.bd dt.tot,.bd dd.tot{border-top:1px solid var(--line);padding-top:6px;font-weight:700;color:var(--ink)}
+.comps a{display:block;font-size:12px;margin:2px 0}
+.toolbar{display:flex;gap:8px;align-items:center;margin:0 0 10px;flex-wrap:wrap}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--panel)}
+.seg button{border:0;background:none;padding:6px 12px;cursor:pointer;color:var(--ink-2);font:inherit;font-size:12px}
+.seg button.on{background:var(--ink);color:var(--bg)}
+select{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px;padding:6px 8px;font:inherit;font-size:12px}
+.empty{padding:36px;text-align:center;color:var(--ink-3)}
+.notes .n{padding:10px 14px;border-bottom:1px solid var(--line);font-size:12.5px}
+.notes .n:last-child{border-bottom:0}
+.notes .warn{color:var(--new)} .notes .error{color:var(--risk)} .notes .info{color:var(--accent)}
+.grid2{display:grid;grid-template-columns:2fr 1fr;gap:16px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:16px}
+.qc{padding:16px 20px}.qc .l{font-size:12px;color:var(--ink-3)}.qc .v{font-family:var(--serif);font-size:30px;font-weight:600}.qc p{margin:4px 0 0;font-size:12px;color:var(--ink-3)}
+svg text{fill:var(--ink-3);font-family:var(--mono);font-size:10px}
+.tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--bg);padding:8px 10px;border-radius:6px;font-size:12px;max-width:300px;display:none;z-index:20}
+.form{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;padding:16px 20px}
+.form label{font-size:11.5px;color:var(--ink-3);display:block}
+.form input{width:100%;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:6px;padding:7px 9px;font:inherit;font-variant-numeric:tabular-nums;margin-top:4px}
+.rules{padding:4px 20px}
+.rules .r{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line)}
+.rules .r:last-child{border-bottom:0}
+.rules .r span{color:var(--ink-3);font-size:12px;display:block}
+.rules .r b{font-family:var(--mono);font-weight:500}
+.foot{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-top:1px solid var(--line)}
+.foot .sum{font-family:var(--serif);font-size:24px;font-weight:600}
+.spin{display:inline-block;width:10px;height:10px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:sp .8s linear infinite;margin-right:6px;vertical-align:-1px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:6px;font-size:12.5px;opacity:0;transition:opacity .2s;z-index:30}
+.toast.show{opacity:1}
+@media (max-width:900px){
+  .app{grid-template-columns:1fr}
+  aside{position:static;height:auto;display:flex;flex-wrap:wrap;gap:4px;padding:10px 16px}
+  .brand,.navsec{display:none}
+  nav{display:contents} nav button{width:auto}
+  main{padding:0 16px 40px}
+  .top input{display:none}
+  .kpis,.grid2,.grid3,.form,.bd{grid-template-columns:1fr 1fr}
+  .kpi:nth-child(3){border-left:0}
+  h1{font-size:26px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="brand"><div class="logo">A</div><div><b>Arbiter</b><small>MERCARI → EBAY</small></div></div>
+    <nav id="nav"></nav>
+  </aside>
+  <main>
+    <div class="top">
+      <div class="crumb" id="crumb">ARBITER</div>
+      <input id="q" placeholder="タイトル・ジャンルで絞り込み…">
+      <button class="btn dark" id="scanBtn">再スキャン</button>
+    </div>
+    <div id="view"></div>
+  </main>
+</div>
+<div class="tip" id="tip"></div>
+<div class="toast" id="toast"></div>
+<script>
+const NAV=[
+  ["OVERVIEW",[["dash","ダッシュボード"],["map","収益機会マップ"],["sim","資本シミュレーター"]]],
+  ["SIGNAL",[["cands","仕入れ候補","cands"]]],
+  ["ACTION",[["queue","仕入れキュー","queue"]]],
+  ["INPUT",[["rules","ジャンル・利益ルール"]]],
+];
+let S={candidates:[],queue:[],summary:{},history:[],rules:{}};
+let view=localGet("view")||"dash", sortBy="score", genre="", open=new Set(), sim=null;
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const yen=n=>"¥"+Math.round(n).toLocaleString("ja-JP");
+const man=n=>n>=1e8?(n/1e8).toFixed(1)+"億":(n/1e4).toFixed(0)+"万";
+const pct=r=>(r*100).toFixed(0)+"%";
+function localGet(k){try{return localStorage.getItem(k)}catch(e){return null}}
+function localSet(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),1800)}
+function score(c){return Math.max(c.profit_jpy,0)*Math.max(c.roi,0)*c.match_score}
+function sorted(list){
+  const k={score:score,profit:c=>c.profit_jpy,roi:c=>c.roi}[sortBy];
+  return [...list].sort((a,b)=>(b.is_new-a.is_new)||(k(b)-k(a)));
+}
+function filtered(){
+  const q=$("#q").value.trim().toLowerCase();
+  return sorted(S.candidates.filter(c=>(!genre||c.genre===genre)&&(!q||(c.mercari_title+" "+c.genre).toLowerCase().includes(q))));
+}
+const inQueue=k=>S.queue.some(x=>x.item_key===k);
+
+async function load(){
+  const r=await fetch("/api/state"); S=await r.json();
+  const b=$("#scanBtn"); b.disabled=S.scanning; b.innerHTML=S.scanning?'<span class="spin"></span>スキャン中…':"再スキャン";
+  render();
+  if(S.scanning) setTimeout(load,1500);
+}
+async function scan(){await fetch("/api/scan",{method:"POST"});toast("スキャンを開始しました");setTimeout(load,300)}
+async function addQ(k){const r=await fetch("/api/queue",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({item_key:k})});toast(r.ok?"仕入れキューに追加しました":"追加できませんでした");load()}
+async function delQ(k){await fetch("/api/queue?key="+encodeURIComponent(k),{method:"DELETE"});load()}
+
+function renderNav(){
+  const cnt={cands:S.candidates.length,queue:S.queue.length};
+  $("#nav").innerHTML=NAV.map(([sec,items])=>`<div class="navsec">${sec}</div>`+items.map(([id,label,c])=>
+    `<button class="${view===id?"on":""}" data-v="${id}"><span>${label}</span><span class="cnt">${c?cnt[c]:""}</span></button>`).join("")).join("");
+  document.querySelectorAll("#nav button").forEach(b=>b.onclick=()=>{view=b.dataset.v;localSet("view",view);render();scrollTo(0,0)});
+}
+function chips(){
+  const s=S.summary; if(!s.finished_at) return "";
+  const t=new Date(s.finished_at).toLocaleString("ja-JP");
+  return `<div class="chips">
+    <span class="chip ${s.data_source==="sample"?"sample":""}">データ <b>${s.data_source==="sample"?"サンプル":"実サイト"}</b></span>
+    <span class="chip">走査 Mercari <b>${s.mercari_count}</b> / eBay <b>${s.ebay_count}</b></span>
+    <span class="chip">為替 <b>¥${s.jpy_per_usd}</b>/USD</span>
+    <span class="chip">下限 利益<b>${yen(s.min_profit_jpy)}</b> ROI<b>${pct(s.min_roi)}</b></span>
+    <span class="chip">最終スキャン <b>${t}</b></span></div>`;
+}
+function candRows(list,{compact=false}={}){
+  if(!list.length) return `<div class="empty">${S.summary.finished_at?"条件を満たす候補はありません":"まだスキャン結果がありません。「再スキャン」を押してください"}</div>`;
+  return `<div class="wide"><table><thead><tr><th>#</th><th>商品</th><th class="num">利益額</th><th class="num">ROI</th><th class="num">仕入</th><th class="num">eBay相場</th><th>マッチ</th>${compact?"":'<th class="num">損益分岐</th>'}<th></th></tr></thead><tbody>`+
+  list.map((c,i)=>{
+    const k=c.item_key, isOpen=open.has(k);
+    return `<tr>
+      <td class="meta">${i+1}</td>
+      <td class="item"><div>${c.is_new?'<span class="tag new">NEW</span>':""}<span class="tag">${esc(c.genre)}</span></div><div class="title">${esc(c.mercari_title)}</div>
+        <div class="meta">${c.shipping_included?"送料込み":"送料別"} ・ 初回検知 ${new Date(c.first_seen).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})}</div></td>
+      <td class="num ${c.profit_jpy>=0?"pos":"neg"} big">${yen(c.profit_jpy)}</td>
+      <td class="num"><b>${pct(c.roi)}</b></td>
+      <td class="num neg">${yen(c.buy_price_jpy)}</td>
+      <td class="num">$${c.market_usd.toFixed(0)}<div class="meta">sold ${c.comps_count}件</div></td>
+      <td class="num"><span class="bar"><i style="width:${c.match_score*100}%"></i></span>${(c.match_score*100).toFixed(0)}</td>
+      ${compact?"":`<td class="num" style="color:var(--new)">${yen(c.breakeven_buy_jpy)}</td>`}
+      <td class="num"><a class="btn buy sm" href="${esc(c.mercari_url)}" target="_blank" rel="noopener">仕入れる</a>
+        <button class="btn sm" data-q="${esc(k)}" ${inQueue(k)?"disabled":""}>${inQueue(k)?"キュー済":"キューへ"}</button>
+        <button class="btn sm" data-o="${esc(k)}">${isOpen?"閉じる":"内訳"}</button></td></tr>`+
+    (isOpen?`<tr class="detail"><td></td><td colspan="${compact?7:8}">${breakdown(c)}</td></tr>`:"");
+  }).join("")+"</tbody></table></div>";
+}
+function breakdown(c){
+  return `<div class="bd"><dl>
+    <dt>eBay想定売価（sold中央値）</dt><dd>$${c.sell_price_usd.toFixed(2)}</dd>
+    <dt>eBay手数料（FVF＋固定）</dt><dd>-$${c.ebay_fee_usd.toFixed(2)}</dd>
+    <dt>換金スプレッド</dt><dd>-${yen(c.fx_spread_jpy)}</dd>
+    <dt>受取（円換算）</dt><dd>${yen(c.received_jpy)}</dd>
+    <dt>仕入（Mercari）</dt><dd>${yen(c.buy_price_jpy)}</dd>
+    ${c.mercari_fee_jpy?`<dt>購入手数料</dt><dd>${yen(c.mercari_fee_jpy)}</dd>`:""}
+    <dt>国際送料</dt><dd>${yen(c.shipping_cost_jpy)}</dd>
+    <dt>梱包・雑費</dt><dd>${yen(c.extra_buy_cost_jpy)}</dd>
+    <dt>総原価</dt><dd>${yen(c.total_cost_jpy)}</dd>
+    <dt class="tot">利益 / ROI</dt><dd class="tot">${yen(c.profit_jpy)} / ${pct(c.roi)}</dd>
+    <dt>損益分岐の仕入れ上限</dt><dd>${yen(c.breakeven_buy_jpy)}</dd></dl>
+    <div class="comps"><div class="meta" style="margin-bottom:4px">eBay比較対象（マッチ上位）</div>${c.comps.map(x=>
+      `<a href="${esc(x.url)}" target="_blank" rel="noopener">$${x.total_usd.toFixed(0)} — ${esc(x.title)}（一致${(x.score*100).toFixed(0)}）</a>`).join("")}</div></div>`;
+}
+function bindRows(){
+  document.querySelectorAll("[data-q]").forEach(b=>b.onclick=()=>addQ(b.dataset.q));
+  document.querySelectorAll("[data-o]").forEach(b=>b.onclick=()=>{const k=b.dataset.o;open.has(k)?open.delete(k):open.add(k);render()});
+  document.querySelectorAll("[data-sort]").forEach(b=>b.onclick=()=>{sortBy=b.dataset.sort;render()});
+  const g=$("#genreSel"); if(g) g.onchange=()=>{genre=g.value;render()};
+}
+function sortSeg(){
+  return `<div class="seg">${[["score","総合"],["profit","利益額"],["roi","利益率"]].map(([k,l])=>`<button data-sort="${k}" class="${sortBy===k?"on":""}">${l}</button>`).join("")}</div>`;
+}
+
+function vDash(){
+  const c=S.candidates, s=S.summary, st=s.stats||{};
+  const avgRoi=c.length?c.reduce((a,x)=>a+x.roi,0)/c.length:0;
+  const total=c.reduce((a,x)=>a+x.profit_jpy,0);
+  const newN=c.filter(x=>x.is_new).length;
+  const notes=(s.notes||[]).concat(S.last_error?[{target:"スキャン",level:"error",message:S.last_error}]:[]);
+  return `<h1>本日、仕入れ資本を最も効率よく回転させる候補を並べています。</h1>
+  <p class="lead">宣言したジャンルと利益ルールの中だけで新着を照合し、eBay手数料・換金スプレッド・送料を差し引いた「実質利益」で並べ替えます。あとは上から選んでポチるだけ。</p>
+  ${chips()}
+  <div class="kpis" style="margin-top:14px">
+    <div class="kpi"><div class="l">仕入れ候補<span>NOW</span></div><div class="v">${c.length}<small>件</small></div><div class="s">うち新着 ${newN}件</div></div>
+    <div class="kpi"><div class="l">平均利益率<span>ROI</span></div><div class="v">${(avgRoi*100).toFixed(1)}<small>%</small></div><div class="s">総原価に対する利益</div></div>
+    <div class="kpi"><div class="l">想定利益合計<span>SUM</span></div><div class="v">${yen(total)}</div><div class="s">候補をすべて仕入れた場合</div></div>
+    <div class="kpi"><div class="l">走査した出品<span>SCAN</span></div><div class="v">${st.scanned??0}<small>件</small></div><div class="s">除外${st.excluded??0} / 相場なし${st.no_comp??0} / 基準未満${st.below_threshold??0}</div></div>
+  </div>
+  <h2><span class="no">· 01</span>本日の最有力候補<span class="sub">利益額 × ROI × マッチ信頼度の総合スコア上位</span></h2>
+  <div class="card">${candRows(sorted(c).slice(0,5),{compact:true})}</div>
+  <div class="grid2" style="margin-top:4px">
+    <div><h2><span class="no">· 02</span>スキャン推移<span class="sub">走査数と、基準を満たした候補数</span></h2><div class="card" style="padding:14px">${histChart()}</div></div>
+    <div><h2><span class="no">· 03</span>アラート</h2><div class="card notes">${notes.length?notes.map(n=>`<div class="n ${n.level}">${esc(n.target)}：${esc(n.message)}</div>`).join(""):'<div class="n">問題はありません</div>'}</div></div>
+  </div>`;
+}
+function histChart(){
+  const h=S.history; if(!h.length) return '<div class="empty">データなし</div>';
+  const W=520,H=150,p=24,max=Math.max(...h.map(x=>x.scanned||0),1),bw=(W-p*2)/h.length;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%">`+h.map((x,i)=>{
+    const sh=(x.scanned||0)/max*(H-p*2), ph=(x.passed||0)/max*(H-p*2), X=p+i*bw;
+    return `<rect x="${X+bw*.15}" y="${H-p-sh}" width="${bw*.7}" height="${sh}" fill="var(--panel-2)"/>
+      <rect x="${X+bw*.3}" y="${H-p-ph}" width="${bw*.4}" height="${ph}" fill="var(--profit)"/>
+      <text x="${X+bw/2}" y="${H-8}" text-anchor="middle">${new Date(x.finished_at).toLocaleDateString("ja-JP",{month:"numeric",day:"numeric"})}</text>`;
+  }).join("")+`<text x="${p}" y="12">走査 ■ / 採択 <tspan fill="var(--profit)">■</tspan></text></svg>`;
+}
+
+function vCands(){
+  const genres=[...new Set(S.candidates.map(c=>c.genre))];
+  return `<h1>実質利益順に並んだ、今日ポチる候補。</h1>
+  <p class="lead">新着は常に上位。「内訳」で手数料・送料・換金スプレッドの全内訳と、相場の根拠にしたeBay成約品を確認できます。</p>
+  ${chips()}
+  <div class="toolbar" style="margin-top:14px">${sortSeg()}
+    <select id="genreSel"><option value="">すべてのジャンル</option>${genres.map(g=>`<option ${g===genre?"selected":""}>${esc(g)}</option>`).join("")}</select></div>
+  <div class="card">${candRows(filtered())}</div>`;
+}
+
+const PALETTE=["#3b4a8c","#2f7a4f","#b07a12","#b3412f","#6b5ca5","#2c7f86"];
+function vMap(){
+  const c=S.candidates, genres=[...new Set(c.map(x=>x.genre))];
+  const W=900,H=420,L=56,B=40,T=20,R=20;
+  const maxX=Math.max(...c.map(x=>x.buy_price_jpy),10000)*1.1, maxY=Math.max(...c.map(x=>x.roi),.5)*1.15, maxP=Math.max(...c.map(x=>x.profit_jpy),1);
+  const X=v=>L+v/maxX*(W-L-R), Y=v=>H-B-v/maxY*(H-B-T);
+  const midX=maxX/2, midY=.4;
+  const a=c.filter(x=>x.roi>=midY&&x.buy_price_jpy<midX), b=c.filter(x=>x.roi<midY&&x.buy_price_jpy<midX), d=c.filter(x=>x.buy_price_jpy>=midX);
+  let grid="";
+  for(let i=0;i<=5;i++){const y=maxY*i/5;grid+=`<line x1="${L}" x2="${W-R}" y1="${Y(y)}" y2="${Y(y)}" stroke="var(--line)"/><text x="${L-8}" y="${Y(y)+3}" text-anchor="end">${(y*100).toFixed(0)}%</text>`;
+    const x=maxX*i/5;grid+=`<line y1="${T}" y2="${H-B}" x1="${X(x)}" x2="${X(x)}" stroke="var(--line)"/><text x="${X(x)}" y="${H-B+16}" text-anchor="middle">${(x/1000).toFixed(0)}K</text>`}
+  const dots=c.map((x,i)=>{const r=6+Math.sqrt(Math.max(x.profit_jpy,0)/maxP)*26, col=PALETTE[genres.indexOf(x.genre)%PALETTE.length];
+    return `<circle data-i="${i}" cx="${X(x.buy_price_jpy)}" cy="${Y(Math.max(x.roi,0))}" r="${r}" fill="${col}" fill-opacity=".22" stroke="${col}" stroke-width="1.2" style="cursor:pointer"/>`}).join("");
+  return `<h1>資本 × 回転 × 利益率で見る、あなたの狙い所。</h1>
+  <p class="lead">横軸に仕入価格、縦軸にROI、円の大きさが利益額。左上は少額で高効率、左下は薄利多売、右側は資本を寝かせる領域です。円をクリックすると候補一覧で内訳を開きます。</p>
+  <div class="card" style="padding:16px"><svg viewBox="0 0 ${W} ${H}" width="100%" id="mapSvg">${grid}
+    <text x="${W-R}" y="${H-6}" text-anchor="end">仕入価格（¥）→</text><text x="${L}" y="${T-6}">↑ ROI</text>${dots}</svg>
+    <div class="chips" style="margin-top:8px">${genres.map((g,i)=>`<span class="chip"><span style="color:${PALETTE[i%PALETTE.length]}">●</span> ${esc(g)}</span>`).join("")}</div></div>
+  <div class="grid3">
+    <div class="card qc"><div class="l">資本効率帯（少額×ROI40%+）</div><div class="v">${a.length}<small style="font-size:14px">件</small></div><p>想定利益 ${yen(a.reduce((s,x)=>s+x.profit_jpy,0))}</p></div>
+    <div class="card qc"><div class="l">薄利多売（少額×ROI40%未満）</div><div class="v">${b.length}<small style="font-size:14px">件</small></div><p>回転数で稼ぐ帯</p></div>
+    <div class="card qc"><div class="l">資本を寝かせる帯（高額仕入れ）</div><div class="v">${d.length}<small style="font-size:14px">件</small></div><p>必要資本 ${yen(d.reduce((s,x)=>s+x.total_cost_jpy,0))}</p></div>
+  </div>`;
+}
+function bindMap(){
+  const tip=$("#tip");
+  document.querySelectorAll("#mapSvg circle").forEach(el=>{
+    const c=S.candidates[+el.dataset.i];
+    el.onmousemove=e=>{tip.style.display="block";tip.style.left=e.clientX+14+"px";tip.style.top=e.clientY+14+"px";
+      tip.innerHTML=`<b>${esc(c.mercari_title)}</b><br>仕入 ${yen(c.buy_price_jpy)} ・ 利益 ${yen(c.profit_jpy)} ・ ROI ${pct(c.roi)}`};
+    el.onmouseleave=()=>tip.style.display="none";
+    el.onclick=()=>{tip.style.display="none";open.add(c.item_key);view="cands";render();scrollTo(0,0)};
+  });
+}
+
+function vSim(){
+  const c=S.candidates, avg=c.length?c.reduce((a,x)=>a+x.roi,0)/c.length:.3;
+  // 候補平均ROIは「基準を通った上澄み」なので、売れ残り・値下げを見込んだ控えめな既定値にする
+  sim=sim||{init:5000000,months:12,roi:20,turns:1,reinvest:80,util:60};
+  const f=sim, rows=[]; let cap=f.init, cum=0;
+  for(let m=1;m<=f.months;m++){
+    const deployed=cap*f.util/100, profit=deployed*(f.roi/100)*f.turns, re=profit*f.reinvest/100;
+    cum+=profit; cap+=re; rows.push({m,cap,profit,cum,withdraw:profit-re});
+  }
+  const W=900,H=260,L=70,B=30,T=16,R=16,max=Math.max(...rows.map(r=>r.cap),f.init);
+  const X=i=>L+i/(rows.length)*(W-L-R), Y=v=>H-B-v/max*(H-B-T);
+  const line=[`${X(0)},${Y(f.init)}`,...rows.map((r,i)=>`${X(i+1)},${Y(r.cap)}`)].join(" ");
+  const inp=(k,l,step)=>`<div><label>${l}<input type="number" step="${step}" data-k="${k}" value="${f[k]}"></label></div>`;
+  return `<h1>「今500万持っていたら、この先どうなる？」</h1>
+  <p class="lead">1回転あたりROI・月の回転数・再投資率から資本の推移を試算します。参考: 現在の候補の平均ROIは <b>${(avg*100).toFixed(1)}%</b> ですが、これは基準を通った上澄みなので、売れ残りや値下げを見込んで低めに置くのが安全です。</p>
+  <div class="card"><div class="form">${inp("init","初期資本（円）",100000)}${inp("months","期間（月）",1)}${inp("roi","1回転あたりROI（%）",.5)}${inp("turns","月の回転数",.5)}${inp("reinvest","再投資率（%）",5)}</div>
+    <div class="form" style="padding-top:0">${inp("util","資本の稼働率（%）",5)}</div></div>
+  <div class="kpis sim" style="margin-top:16px">
+    <div class="kpi"><div class="l">${f.months}か月後の資本</div><div class="v">${yen(rows.at(-1)?.cap??f.init)}</div><div class="s">初期比 ×${((rows.at(-1)?.cap??f.init)/f.init).toFixed(2)}</div></div>
+    <div class="kpi"><div class="l">累計利益</div><div class="v">${yen(cum)}</div><div class="s">月平均 ${yen(cum/Math.max(f.months,1))}</div></div>
+    <div class="kpi"><div class="l">引き出し可能額</div><div class="v">${yen(rows.reduce((a,r)=>a+r.withdraw,0))}</div><div class="s">再投資に回さない分</div></div>
+    <div class="kpi"><div class="l">月の仕入れ額（初月）</div><div class="v">${yen(f.init*f.util/100*f.turns)}</div><div class="s">稼働資本 × 回転数</div></div>
+  </div>
+  <div class="card" style="padding:16px;margin-top:16px"><svg viewBox="0 0 ${W} ${H}" width="100%">
+    ${[0,.25,.5,.75,1].map(t=>`<line x1="${L}" x2="${W-R}" y1="${Y(max*t)}" y2="${Y(max*t)}" stroke="var(--line)"/><text x="${L-8}" y="${Y(max*t)+3}" text-anchor="end">${man(max*t)}</text>`).join("")}
+    ${rows.map((r,i)=>`<text x="${X(i+1)}" y="${H-10}" text-anchor="middle">${r.m}</text>`).join("")}
+    <polyline points="${line}" fill="none" stroke="var(--profit)" stroke-width="2.5"/></svg></div>`;
+}
+function bindSim(){document.querySelectorAll("[data-k]").forEach(i=>i.onchange=()=>{sim[i.dataset.k]=parseFloat(i.value)||0;render()})}
+
+function vQueue(){
+  const q=S.queue, cost=q.reduce((a,x)=>a+x.buy_price_jpy,0), prof=q.reduce((a,x)=>a+x.profit_jpy,0);
+  return `<h1>今、ポチる${q.length}件。</h1>
+  <p class="lead">候補から「キューへ」で選んだものです。上から順にメルカリで購入するだけ。CSVで書き出して記録にも使えます。</p>
+  <div class="card">${q.length?`<div class="wide"><table><thead><tr><th>#</th><th>アイテム</th><th class="num">仕入</th><th class="num">予想利益</th><th class="num">ROI</th><th class="num">損益分岐</th><th></th></tr></thead><tbody>${q.map((x,i)=>`<tr>
+      <td class="meta">·${String(i+1).padStart(2,"0")}</td><td class="item"><span class="tag">${esc(x.genre)}</span><div class="title">${esc(x.mercari_title)}</div></td>
+      <td class="num">${yen(x.buy_price_jpy)}</td><td class="num ${x.profit_jpy>=0?"pos":"neg"}">${yen(x.profit_jpy)}</td><td class="num">${pct(x.roi)}</td><td class="num">${yen(x.breakeven_buy_jpy)}</td>
+      <td class="num"><a class="btn buy sm" href="${esc(x.mercari_url)}" target="_blank" rel="noopener">仕入れる</a> <button class="btn sm" data-d="${esc(x.item_key)}">外す</button></td></tr>`).join("")}</tbody></table></div>
+    <div class="foot"><div><span class="meta">TOTAL</span><div class="sum">${yen(cost)} <span class="meta">→ 予想利益 ${yen(prof)}</span></div></div><a class="btn" href="/api/queue.csv">CSV 書き出し</a></div>`
+    :'<div class="empty">仕入れキューは空です。「仕入れ候補」から追加してください。</div>'}</div>`;
+}
+function bindQueue(){document.querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>delQ(b.dataset.d))}
+
+function vRules(){
+  const r=S.rules, f=r.fees||{}, th=r.thresholds||{};
+  const row=(l,s,v)=>`<div class="r"><div>${l}<span>${s}</span></div><b>${v}</b></div>`;
+  return `<h1>実質利益の算出式を、あなたが所有する。</h1>
+  <p class="lead">為替・手数料・送料・しきい値の仮定を明示しておき、いつでも点検できるようにします。値は <code>config.yaml</code> で変更し、「再スキャン」で全候補の並びに反映されます。</p>
+  <h2><span class="no">§</span>マーケット手数料・為替</h2><div class="card rules">
+    ${row("eBay Final Value Fee","カテゴリ平均（ジャンル別に上書き可）",((f.ebay?.final_value_fee_rate??0)*100).toFixed(2)+" %")}
+    ${row("eBay 固定手数料","取引ごと",(f.ebay?.payment_fixed_fee_usd??0).toFixed(2)+" USD")}
+    ${row("Payoneer / Wise 換金","USD→JPY のスプレッド",((f.ebay?.payout_fx_spread_rate??0)*100).toFixed(1)+" %")}
+    ${row("Mercari 購入手数料","購入側は原則0",yen(f.mercari?.buyer_fee_jpy??0)+" + "+((f.mercari?.buyer_fee_rate??0)*100).toFixed(1)+" %")}
+    ${row("為替レート","",(r.fx?.jpy_per_usd??"-")+" 円/USD")}</div>
+  <h2><span class="no">§</span>候補に載せる基準</h2><div class="card rules">
+    ${row("下限 利益額","ジャンル別に上書き可",yen(th.min_profit_jpy??0))}
+    ${row("下限 ROI","利益 ÷ 総原価",((th.min_roi??0)*100).toFixed(0)+" %")}
+    ${row("マッチしきい値","Mercari品 ↔ eBay成約品の一致スコア",(th.match_threshold??0).toFixed(2))}
+    ${row("相場に必要な成約件数","これ未満は「相場なし」で除外",(th.min_comps??0)+" 件")}
+    ${row("除外キーワード","全ジャンル共通",esc((r.exclude_keywords||[]).join("・")))}
+    ${row("データソース","live / sample / auto",esc(r.data_source))}</div>
+  <h2><span class="no">§</span>ジャンル定義<span class="sub">${S.summary.data_source==="sample"?"（いまはサンプルのジャンルを表示中。実サイトのスキャンには config.yaml の genres が使われます）":""}</span></h2>
+  <div class="card"><div class="wide"><table><thead><tr><th>ジャンル</th><th>Mercari検索</th><th>eBay検索</th><th class="num">国際送料</th><th class="num">梱包・雑費</th><th class="num">下限</th></tr></thead><tbody>
+    ${(r.genres||[]).map(g=>`<tr><td><div class="title">${esc(g.name)}</div><div class="meta">${esc(g.genre||"")}</div></td><td>${esc(g.mercari_query)}</td><td>${esc(g.ebay_query)}</td>
+      <td class="num">${yen(g.shipping_cost_jpy)}</td><td class="num">${yen(g.extra_buy_cost_jpy)}</td>
+      <td class="num">${g.min_profit_jpy!=null?yen(g.min_profit_jpy):"既定"} / ${g.min_roi!=null?pct(g.min_roi):"既定"}</td></tr>`).join("")||'<tr><td colspan="6" class="empty">config.yaml に genres がありません</td></tr>'}
+  </tbody></table></div></div>`;
+}
+
+const VIEWS={dash:["OVERVIEW / ダッシュボード",vDash],map:["OVERVIEW / 収益機会マップ",vMap,bindMap],sim:["OVERVIEW / 資本シミュレーター",vSim,bindSim],
+  cands:["SIGNAL / 仕入れ候補",vCands],queue:["ACTION / 仕入れキュー",vQueue,bindQueue],rules:["INPUT / ジャンル・利益ルール",vRules]};
+function render(){
+  if(!VIEWS[view]) view="dash";
+  renderNav();
+  const [crumb,fn,bind]=VIEWS[view];
+  $("#crumb").textContent="ARBITER / "+crumb;
+  $("#view").innerHTML=fn();
+  bindRows(); bind&&bind();
+}
+$("#scanBtn").onclick=scan;
+$("#q").oninput=()=>{if(view!=="cands"){view="cands"} render()};
+load();
+</script>
+</body>
+</html>

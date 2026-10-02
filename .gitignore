@@ -1,0 +1,15 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# 収集データ・Chromeプロファイル・DB（個人データなのでコミットしない）
+data/
+
+# ローカル設定（Chromeプロファイルのパス等を含む）。共有用は config.example.yaml
+config.yaml
+
+# その他
+backup/
+.claude/
+.DS_Store
