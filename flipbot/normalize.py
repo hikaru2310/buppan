@@ -25,6 +25,17 @@ PHRASES: dict[str, str] = {
     "ファミリーコンピュータ": "famicom",
     "スーパーファミコン": "super famicom",
     "スーファミ": "super famicom",
+    "ニンテンドウ64": "nintendo 64",
+    "nintendo64": "nintendo 64",
+    "ニンテンドーds lite": "nintendo ds lite",
+    "ds lite": "ds lite",
+    "dsライト": "ds lite",
+    "ウォークマン": "walkman",
+    "カセット": "cassette",
+    "フロッグマン": "frogman",
+    "フィルムカメラ": "film camera",
+    "一眼レフ": "slr",
+    "プログラム": "program",
     "ニンテンドースイッチ": "nintendo switch",
     "スイッチ": "switch",
     "プレイステーション": "playstation",
@@ -77,7 +88,8 @@ PHRASES: dict[str, str] = {
     "未使用": "new",
     "新品": "new",
     "限定": "limited",
-    "本体": "console",
+    # 「本体」はゲーム機でもカメラでも使うので中立語にして比較から外す（本体のみ判定には使う）
+    "本体": "unit",
 }
 
 # マッチングでは意味を持たない語（両言語）
@@ -90,7 +102,7 @@ STOPWORDS: set[str] = {
     "used", "tested", "working", "works", "japan", "japanese", "jp", "import", "original",
     "authentic", "genuine", "free", "shipping", "excellent", "mint", "near", "good", "very",
     "with", "and", "the", "for", "from", "of", "in", "a", "w", "only", "rare", "f/s", "fs",
-    "nm", "exc", "+", "-", "/", "&", "item",
+    "nm", "exc", "+", "-", "/", "&", "item", "unit",
 }
 
 _PHRASE_KEYS = sorted(PHRASES, key=len, reverse=True)

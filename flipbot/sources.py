@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .config import Target
 from .scrape_ebay import EbaySold, build_ebay_sold_url
-from .scrape_mercari import MercariListing, build_mercari_search_url
+from .scrape_mercari import MercariListing, build_mercari_keyword_url
 
 SAMPLE_PATH = Path(__file__).parent / "fixtures" / "sample.json"
 
@@ -28,7 +28,7 @@ def sample_items(target_id: str) -> tuple[list[MercariListing], list[EbaySold]]:
             shipping_included=bool(m["shipping_included"]),
             status="on_sale",
             # サンプルは実在の出品ではないので、タイトル検索ページへ飛ばす
-            url=build_mercari_search_url(m["title"]),
+            url=build_mercari_keyword_url(m["title"]),
             item_id=m["item_id"],
         )
         for m in raw["mercari"].get(target_id, [])

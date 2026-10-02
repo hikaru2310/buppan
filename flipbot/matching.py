@@ -41,7 +41,7 @@ def match_score(mercari_title: str, ebay_title: str) -> float:
     # 箱あり/本体のみ の食い違いは相場が大きく変わるので減点
     # （"body only" はレンズなしの意味なので箱の有無とは無関係）
     m_box, e_box = "box" in mt, bool({"box", "cib"} & et) and "no box" not in e_norm
-    m_only = any(p in m_norm for p in ("console のみ", "console only", "箱なし", "no box"))
+    m_only = any(p in m_norm for p in ("unit のみ", "console only", "箱なし", "no box"))
     e_only = any(p in e_norm for p in ("console only", "unit only", "system only", "loose", "no box"))
     if (m_only and e_box) or (m_box and e_only):
         score *= 0.5

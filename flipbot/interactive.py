@@ -34,8 +34,8 @@ async def login_flow(cfg: Config) -> int:
     try:
         console.print(
             "[bold]ブラウザが開きます。[/bold]\n"
-            "- Mercari と eBay のページで必要な確認（ログイン/人間確認）を済ませてください。\n"
-            "- 特に、検索結果ページでブロックされることがあるので、下記の検索URLまで進んでください。\n"
+            "- eBay の「売れた商品」検索はログインが必要です。開いたブラウザで eBay にログインしてください。\n"
+            "- ログイン後、eBay の検索結果（Sold）が表示されればOKです。\n"
             "- 終わったらこのターミナルで [bold]Ctrl+C[/bold] を押して終了してください。\n"
         )
 
@@ -66,3 +66,39 @@ async def login_flow(cfg: Config) -> int:
     finally:
         await close_session(session)
 
+
+
+async def ebay_login_until_ready(cfg: Config, *, timeout_sec: int = 600) -> str:
+    """Web画面の「eBayにログイン」用。ツール用ブラウザでeBayのSold検索を開き、
+    ログインして一覧が見えた時点（またはウィンドウを閉じた時点）で終了する。"""
+    from .scrape_ebay import parse_ebay_sold_html
+
+    query = cfg.all_targets[0].ebay_query if cfg.all_targets else "Game Boy"
+    session = await open_page(
+        user_agent=cfg.app.user_agent if cfg.app.use_config_user_agent else None,
+        headless=False,
+        user_data_dir=cfg.app.user_data_dir,
+        chrome_profile_directory=cfg.app.chrome_profile_directory,
+        browser_channel=cfg.app.browser_channel,
+        strip_playwright_automation_args=cfg.app.strip_playwright_automation_args,
+        chrome_cdp_url=cfg.app.chrome_cdp_url,
+    )
+    try:
+        await session.page.goto(build_ebay_sold_url(query), wait_until="domcontentloaded")
+        for _ in range(timeout_sec // 2):
+            await asyncio.sleep(2)
+            if session.page.is_closed():
+                return "closed"
+            try:
+                html = await session.page.content()
+            except PlaywrightError:
+                continue
+            if "/sch/" in session.page.url and parse_ebay_sold_html(html):
+                await asyncio.sleep(2)  # クッキー保存の猶予
+                return "ok"
+        return "timeout"
+    finally:
+        try:
+            await close_session(session)
+        except PlaywrightError:
+            pass

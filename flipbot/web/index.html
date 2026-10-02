@@ -87,6 +87,20 @@ td.item{min-width:260px}
 .bd dt{color:var(--ink-3)} .bd dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
 .bd dt.tot,.bd dd.tot{border-top:1px solid var(--line);padding-top:6px;font-weight:700;color:var(--ink)}
 .comps a{display:block;font-size:12px;margin:2px 0}
+.itemrow{display:flex;gap:12px;align-items:flex-start}
+.thumb{width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--line);flex:none;background:var(--panel-2)}
+a.title{text-decoration:none;display:block}
+a.title:hover{text-decoration:underline}
+.links{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11.5px;margin-top:2px}
+.links a{text-decoration:none}
+.tag.warn{background:var(--risk-bg);color:var(--risk)}
+.btn.ghost{color:var(--ink-3)}
+.menuwrap{position:relative;display:inline-block}
+.menu{position:absolute;right:0;top:110%;z-index:10;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.12);padding:4px;min-width:190px;text-align:left}
+.menu button{display:block;width:100%;border:0;background:none;text-align:left;padding:7px 10px;border-radius:5px;cursor:pointer;color:var(--ink);font:inherit;font-size:12.5px}
+.menu button:hover{background:var(--panel-2)}
+.chk{font-size:12px;color:var(--ink-2);display:flex;gap:6px;align-items:center}
+input.price{width:90px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:5px;padding:3px 6px;font:inherit;font-size:12px;text-align:right;margin:0 4px}
 .toolbar{display:flex;gap:8px;align-items:center;margin:0 0 10px;flex-wrap:wrap}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--panel)}
 .seg button{border:0;background:none;padding:6px 12px;cursor:pointer;color:var(--ink-2);font:inherit;font-size:12px}
@@ -149,11 +163,12 @@ svg text{fill:var(--ink-3);font-family:var(--mono);font-size:10px}
 const NAV=[
   ["OVERVIEW",[["dash","ダッシュボード"],["map","収益機会マップ"],["sim","資本シミュレーター"]]],
   ["SIGNAL",[["cands","仕入れ候補","cands"]]],
-  ["ACTION",[["queue","仕入れキュー","queue"]]],
+  ["ACTION",[["queue","仕入れキュー","queue"],["history","取引履歴","purchases"],["dismissed","見送りリスト","dismissed"]]],
   ["INPUT",[["rules","ジャンル・利益ルール"]]],
 ];
-let S={candidates:[],queue:[],summary:{},history:[],rules:{}};
-let view=localGet("view")||"dash", sortBy="score", genre="", open=new Set(), sim=null;
+let S={candidates:[],queue:[],dismissed:[],purchases:[],summary:{},history:[],rules:{}};
+let view=localGet("view")||"dash", sortBy="score", genre="", open=new Set(), sim=null, showNear=localGet("near")==="1", menuFor=null;
+const REASONS=["価格が高い","状態が悪い・リスク","商品違い（マッチ誤り）","相場が怪しい","その他"];
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const yen=n=>"¥"+Math.round(n).toLocaleString("ja-JP");
@@ -167,24 +182,39 @@ function sorted(list){
   const k={score:score,profit:c=>c.profit_jpy,roi:c=>c.roi}[sortBy];
   return [...list].sort((a,b)=>(b.is_new-a.is_new)||(k(b)-k(a)));
 }
+// 見送り・仕入れ済みは一覧から除く
+function active(){
+  const hide=new Set([...S.dismissed,...S.purchases].map(x=>x.item_key));
+  return S.candidates.filter(c=>!hide.has(c.item_key));
+}
+const passing=()=>active().filter(c=>!c.near_miss);
 function filtered(){
   const q=$("#q").value.trim().toLowerCase();
-  return sorted(S.candidates.filter(c=>(!genre||c.genre===genre)&&(!q||(c.mercari_title+" "+c.genre).toLowerCase().includes(q))));
+  const base=active().filter(c=>showNear||!c.near_miss);
+  const list=base.filter(c=>(!genre||c.genre===genre)&&(!q||(c.mercari_title+" "+c.genre).toLowerCase().includes(q)));
+  return [...sorted(list.filter(c=>!c.near_miss)),...sorted(list.filter(c=>c.near_miss))];
 }
+const isSample=()=>S.summary.data_source==="sample";
 const inQueue=k=>S.queue.some(x=>x.item_key===k);
 
 async function load(){
   const r=await fetch("/api/state"); S=await r.json();
-  const b=$("#scanBtn"); b.disabled=S.scanning; b.innerHTML=S.scanning?'<span class="spin"></span>スキャン中…':"再スキャン";
+  const b=$("#scanBtn"), busy=S.scanning||S.logging_in; b.disabled=busy;
+  b.innerHTML=S.scanning?'<span class="spin"></span>スキャン中…':S.logging_in?'<span class="spin"></span>eBayログイン待ち…':"再スキャン";
   render();
-  if(S.scanning) setTimeout(load,1500);
+  if(busy) setTimeout(load,2000);
 }
 async function scan(){await fetch("/api/scan",{method:"POST"});toast("スキャンを開始しました");setTimeout(load,300)}
 async function addQ(k){const r=await fetch("/api/queue",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({item_key:k})});toast(r.ok?"仕入れキューに追加しました":"追加できませんでした");load()}
 async function delQ(k){await fetch("/api/queue?key="+encodeURIComponent(k),{method:"DELETE"});load()}
+async function post(url,body){return fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})}
+async function dismiss(k,reason){menuFor=null;const r=await post("/api/dismiss",{item_key:k,reason});toast(r.ok?"見送りました（見送りリストから戻せます）":"見送りできませんでした");load()}
+async function undo(kind,k){await fetch(`/api/${kind}?key=`+encodeURIComponent(k),{method:"DELETE"});toast("元に戻しました");load()}
+async function bought(k,price){const r=await post("/api/purchased",{item_key:k,actual_buy_jpy:price});toast(r.ok?"取引履歴に記録しました":"記録できませんでした");load()}
+async function ebayLogin(){const r=await (await post("/api/ebay-login",{})).json();toast(r.started?"ツール用ブラウザが開きます。eBayにログインしてください":"スキャン中のため、終わってから押してください");setTimeout(load,500)}
 
 function renderNav(){
-  const cnt={cands:S.candidates.length,queue:S.queue.length};
+  const cnt={cands:passing().length,queue:S.queue.length,purchases:S.purchases.length,dismissed:S.dismissed.length};
   $("#nav").innerHTML=NAV.map(([sec,items])=>`<div class="navsec">${sec}</div>`+items.map(([id,label,c])=>
     `<button class="${view===id?"on":""}" data-v="${id}"><span>${label}</span><span class="cnt">${c?cnt[c]:""}</span></button>`).join("")).join("");
   document.querySelectorAll("#nav button").forEach(b=>b.onclick=()=>{view=b.dataset.v;localSet("view",view);render();scrollTo(0,0)});
@@ -206,17 +236,23 @@ function candRows(list,{compact=false}={}){
     const k=c.item_key, isOpen=open.has(k);
     return `<tr>
       <td class="meta">${i+1}</td>
-      <td class="item"><div>${c.is_new?'<span class="tag new">NEW</span>':""}<span class="tag">${esc(c.genre)}</span></div><div class="title">${esc(c.mercari_title)}</div>
-        <div class="meta">${c.shipping_included?"送料込み":"送料別"} ・ 初回検知 ${new Date(c.first_seen).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})}</div></td>
+      <td class="item"><div class="itemrow">${c.image_url?`<img class="thumb" src="${esc(c.image_url)}" alt="" loading="lazy">`:""}<div>
+        <div>${c.is_new?'<span class="tag new">NEW</span>':""}${c.near_miss?'<span class="tag warn">基準未満</span>':""}${c.is_auction?'<span class="tag warn">オークション</span>':""}<span class="tag">${esc(c.genre)}</span></div>
+        <a class="title" href="${esc(c.mercari_url)}" target="_blank" rel="noopener">${esc(c.mercari_title)}</a>
+        <div class="meta">${c.shipping_included?"送料込み":"送料別"} ・ 初回検知 ${new Date(c.first_seen).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
+        <div class="links"><a href="${esc(c.mercari_url)}" target="_blank" rel="noopener">${isSample()?"メルカリで検索（サンプル）":"メルカリ商品ページ"} ↗</a>
+          ${c.ebay_sold_search_url?`<a href="${esc(c.ebay_sold_search_url)}" target="_blank" rel="noopener">eBay落札相場 ↗</a>`:""}
+          ${c.ebay_research_url?`<a href="${esc(c.ebay_research_url)}" target="_blank" rel="noopener">Terapeak ↗</a>`:""}</div></div></div></td>
       <td class="num ${c.profit_jpy>=0?"pos":"neg"} big">${yen(c.profit_jpy)}</td>
       <td class="num"><b>${pct(c.roi)}</b></td>
       <td class="num neg">${yen(c.buy_price_jpy)}</td>
-      <td class="num">$${c.market_usd.toFixed(0)}<div class="meta">sold ${c.comps_count}件</div></td>
+      <td class="num">$${c.market_usd.toFixed(0)}<div class="meta"><a href="#" data-o="${esc(k)}">根拠 sold ${c.comps_count}件</a></div></td>
       <td class="num"><span class="bar"><i style="width:${c.match_score*100}%"></i></span>${(c.match_score*100).toFixed(0)}</td>
       ${compact?"":`<td class="num" style="color:var(--new)">${yen(c.breakeven_buy_jpy)}</td>`}
       <td class="num"><a class="btn buy sm" href="${esc(c.mercari_url)}" target="_blank" rel="noopener">仕入れる</a>
         <button class="btn sm" data-q="${esc(k)}" ${inQueue(k)?"disabled":""}>${inQueue(k)?"キュー済":"キューへ"}</button>
-        <button class="btn sm" data-o="${esc(k)}">${isOpen?"閉じる":"内訳"}</button></td></tr>`+
+        <button class="btn sm" data-o="${esc(k)}">${isOpen?"閉じる":"内訳"}</button>
+        <span class="menuwrap"><button class="btn sm ghost" data-m="${esc(k)}">仕入れない</button>${menuFor===k?`<div class="menu">${REASONS.map(r=>`<button data-dk="${esc(k)}" data-r="${esc(r)}">${esc(r)}</button>`).join("")}</div>`:""}</span></td></tr>`+
     (isOpen?`<tr class="detail"><td></td><td colspan="${compact?7:8}">${breakdown(c)}</td></tr>`:"");
   }).join("")+"</tbody></table></div>";
 }
@@ -233,12 +269,24 @@ function breakdown(c){
     <dt>総原価</dt><dd>${yen(c.total_cost_jpy)}</dd>
     <dt class="tot">利益 / ROI</dt><dd class="tot">${yen(c.profit_jpy)} / ${pct(c.roi)}</dd>
     <dt>損益分岐の仕入れ上限</dt><dd>${yen(c.breakeven_buy_jpy)}</dd></dl>
-    <div class="comps"><div class="meta" style="margin-bottom:4px">eBay比較対象（マッチ上位）</div>${c.comps.map(x=>
-      `<a href="${esc(x.url)}" target="_blank" rel="noopener">$${x.total_usd.toFixed(0)} — ${esc(x.title)}（一致${(x.score*100).toFixed(0)}）</a>`).join("")}</div></div>`;
+    <div class="comps"><div class="meta" style="margin-bottom:4px">相場の根拠：eBayで実際に売れた商品（マッチ上位${c.comps.length}件 / 全${c.comps_count}件の中央値）</div>${c.comps.map(x=>
+      `<a href="${esc(x.url)}" target="_blank" rel="noopener">$${x.total_usd.toFixed(0)} — ${esc(x.title)}（一致${(x.score*100).toFixed(0)}）↗</a>`).join("")}
+      <div class="meta" style="margin:10px 0 4px">自分の目で確かめる</div>
+      <a href="${esc(c.mercari_url)}" target="_blank" rel="noopener">${isSample()?"メルカリで検索（サンプルのため商品ページなし）":"このメルカリ商品ページ"} ↗</a>
+      ${c.ebay_sold_search_url?`<a href="${esc(c.ebay_sold_search_url)}" target="_blank" rel="noopener">eBayの落札（Sold）検索結果 ↗</a>`:""}
+      ${c.ebay_research_url?`<a href="${esc(c.ebay_research_url)}" target="_blank" rel="noopener">Terapeak（過去90日の販売実績・要セラーログイン）↗</a>`:""}
+      ${c.mercari_similar_url?`<a href="${esc(c.mercari_similar_url)}" target="_blank" rel="noopener">メルカリの同ジャンル出品一覧 ↗</a>`:""}
+      ${isSample()?'<div class="meta" style="margin-top:6px">※ サンプルデータの比較対象リンクは、タイトルでのeBay検索ページです</div>':""}</div></div>`;
 }
 function bindRows(){
   document.querySelectorAll("[data-q]").forEach(b=>b.onclick=()=>addQ(b.dataset.q));
-  document.querySelectorAll("[data-o]").forEach(b=>b.onclick=()=>{const k=b.dataset.o;open.has(k)?open.delete(k):open.add(k);render()});
+  document.querySelectorAll("[data-o]").forEach(b=>b.onclick=e=>{e.preventDefault();const k=b.dataset.o;open.has(k)?open.delete(k):open.add(k);render()});
+  document.querySelectorAll("[data-m]").forEach(b=>b.onclick=e=>{e.stopPropagation();menuFor=menuFor===b.dataset.m?null:b.dataset.m;render()});
+  document.querySelectorAll("[data-dk]").forEach(b=>b.onclick=e=>{e.stopPropagation();dismiss(b.dataset.dk,b.dataset.r)});
+  document.querySelectorAll("[data-undo]").forEach(b=>b.onclick=()=>undo(b.dataset.kind,b.dataset.undo));
+  document.querySelectorAll("[data-buy]").forEach(b=>b.onclick=()=>{const inp=document.querySelector(`[data-price="${CSS.escape(b.dataset.buy)}"]`);bought(b.dataset.buy,inp?inp.value:null)});
+  document.querySelectorAll("[data-login]").forEach(b=>b.onclick=ebayLogin);
+  const nm=$("#nearChk"); if(nm) nm.onchange=()=>{showNear=nm.checked;localSet("near",showNear?"1":"0");render()};
   document.querySelectorAll("[data-sort]").forEach(b=>b.onclick=()=>{sortBy=b.dataset.sort;render()});
   const g=$("#genreSel"); if(g) g.onchange=()=>{genre=g.value;render()};
 }
@@ -247,11 +295,16 @@ function sortSeg(){
 }
 
 function vDash(){
-  const c=S.candidates, s=S.summary, st=s.stats||{};
+  const c=passing(), s=S.summary, st=s.stats||{};
   const avgRoi=c.length?c.reduce((a,x)=>a+x.roi,0)/c.length:0;
   const total=c.reduce((a,x)=>a+x.profit_jpy,0);
   const newN=c.filter(x=>x.is_new).length;
   const notes=(s.notes||[]).concat(S.last_error?[{target:"スキャン",level:"error",message:S.last_error}]:[]);
+  const needLogin=notes.some(n=>/ログイン|拒否|captcha/.test(n.message));
+  const loginBox=needLogin||S.logging_in?`<div class="n info"><b>eBayの相場を取るには、ツール用ブラウザで一度だけeBayにログインが必要です。</b><br>
+    <button class="btn dark sm" data-login style="margin-top:6px" ${S.logging_in||S.scanning?"disabled":""}>${S.logging_in?'<span class="spin"></span>ブラウザでログインしてください…':"eBayにログインする"}</button>
+    <div class="meta">ボタンを押すとChromeが開きます。eBayにログインし、検索結果が表示されたら自動で閉じて再スキャンします。</div></div>`:"";
+  const loginMsg=S.login_result&&S.login_result!=="ok"?`<div class="n warn">eBayログイン: ${S.login_result==="timeout"?"時間切れになりました。もう一度お試しください":S.login_result==="closed"?"ブラウザが閉じられました":esc(S.login_result)}</div>`:"";
   return `<h1>本日、仕入れ資本を最も効率よく回転させる候補を並べています。</h1>
   <p class="lead">宣言したジャンルと利益ルールの中だけで新着を照合し、eBay手数料・換金スプレッド・送料を差し引いた「実質利益」で並べ替えます。あとは上から選んでポチるだけ。</p>
   ${chips()}
@@ -265,8 +318,14 @@ function vDash(){
   <div class="card">${candRows(sorted(c).slice(0,5),{compact:true})}</div>
   <div class="grid2" style="margin-top:4px">
     <div><h2><span class="no">· 02</span>スキャン推移<span class="sub">走査数と、基準を満たした候補数</span></h2><div class="card" style="padding:14px">${histChart()}</div></div>
-    <div><h2><span class="no">· 03</span>アラート</h2><div class="card notes">${notes.length?notes.map(n=>`<div class="n ${n.level}">${esc(n.target)}：${esc(n.message)}</div>`).join(""):'<div class="n">問題はありません</div>'}</div></div>
+    <div><h2><span class="no">· 03</span>アラート</h2><div class="card notes">${loginBox}${loginMsg}${notes.length?dedupNotes(notes).map(n=>`<div class="n ${n.level}">${esc(n.target)}：${esc(n.message)}</div>`).join(""):(loginBox?"":'<div class="n">問題はありません</div>')}</div></div>
   </div>`;
+}
+// 同じ警告がジャンル数ぶん並ばないようにまとめる
+function dedupNotes(notes){
+  const m=new Map();
+  for(const n of notes){const k=n.level+n.message; m.has(k)?m.get(k).targets.push(n.target):m.set(k,{...n,targets:[n.target]})}
+  return [...m.values()].map(n=>({...n,target:n.targets.length>2?`${n.targets[0]} ほか${n.targets.length-1}ジャンル`:n.targets.join("・")}));
 }
 function histChart(){
   const h=S.history; if(!h.length) return '<div class="empty">データなし</div>';
@@ -280,18 +339,19 @@ function histChart(){
 }
 
 function vCands(){
-  const genres=[...new Set(S.candidates.map(c=>c.genre))];
+  const genres=[...new Set(active().map(c=>c.genre))], nearN=active().filter(c=>c.near_miss).length;
   return `<h1>実質利益順に並んだ、今日ポチる候補。</h1>
   <p class="lead">新着は常に上位。「内訳」で手数料・送料・換金スプレッドの全内訳と、相場の根拠にしたeBay成約品を確認できます。</p>
   ${chips()}
   <div class="toolbar" style="margin-top:14px">${sortSeg()}
-    <select id="genreSel"><option value="">すべてのジャンル</option>${genres.map(g=>`<option ${g===genre?"selected":""}>${esc(g)}</option>`).join("")}</select></div>
+    <select id="genreSel"><option value="">すべてのジャンル</option>${genres.map(g=>`<option ${g===genre?"selected":""}>${esc(g)}</option>`).join("")}</select>
+    <label class="chk"><input type="checkbox" id="nearChk" ${showNear?"checked":""}> 惜しい候補も表示（下限の利益・ROIに届かないが黒字：${nearN}件）</label></div>
   <div class="card">${candRows(filtered())}</div>`;
 }
 
 const PALETTE=["#3b4a8c","#2f7a4f","#b07a12","#b3412f","#6b5ca5","#2c7f86"];
 function vMap(){
-  const c=S.candidates, genres=[...new Set(c.map(x=>x.genre))];
+  const c=passing(), genres=[...new Set(c.map(x=>x.genre))];
   const W=900,H=420,L=56,B=40,T=20,R=20;
   const maxX=Math.max(...c.map(x=>x.buy_price_jpy),10000)*1.1, maxY=Math.max(...c.map(x=>x.roi),.5)*1.15, maxP=Math.max(...c.map(x=>x.profit_jpy),1);
   const X=v=>L+v/maxX*(W-L-R), Y=v=>H-B-v/maxY*(H-B-T);
@@ -316,7 +376,7 @@ function vMap(){
 function bindMap(){
   const tip=$("#tip");
   document.querySelectorAll("#mapSvg circle").forEach(el=>{
-    const c=S.candidates[+el.dataset.i];
+    const c=passing()[+el.dataset.i];
     el.onmousemove=e=>{tip.style.display="block";tip.style.left=e.clientX+14+"px";tip.style.top=e.clientY+14+"px";
       tip.innerHTML=`<b>${esc(c.mercari_title)}</b><br>仕入 ${yen(c.buy_price_jpy)} ・ 利益 ${yen(c.profit_jpy)} ・ ROI ${pct(c.roi)}`};
     el.onmouseleave=()=>tip.style.display="none";
@@ -325,7 +385,7 @@ function bindMap(){
 }
 
 function vSim(){
-  const c=S.candidates, avg=c.length?c.reduce((a,x)=>a+x.roi,0)/c.length:.3;
+  const c=passing(), avg=c.length?c.reduce((a,x)=>a+x.roi,0)/c.length:.3;
   // 候補平均ROIは「基準を通った上澄み」なので、売れ残り・値下げを見込んだ控えめな既定値にする
   sim=sim||{init:5000000,months:12,roi:20,turns:1,reinvest:80,util:60};
   const f=sim, rows=[]; let cap=f.init, cum=0;
@@ -357,16 +417,44 @@ function bindSim(){document.querySelectorAll("[data-k]").forEach(i=>i.onchange=(
 function vQueue(){
   const q=S.queue, cost=q.reduce((a,x)=>a+x.buy_price_jpy,0), prof=q.reduce((a,x)=>a+x.profit_jpy,0);
   return `<h1>今、ポチる${q.length}件。</h1>
-  <p class="lead">候補から「キューへ」で選んだものです。上から順にメルカリで購入するだけ。CSVで書き出して記録にも使えます。</p>
+  <p class="lead">候補から「キューへ」で選んだものです。上から順にメルカリで購入し、買えたら実際の価格を入れて「仕入れ済みにする」で取引履歴へ移します。</p>
   <div class="card">${q.length?`<div class="wide"><table><thead><tr><th>#</th><th>アイテム</th><th class="num">仕入</th><th class="num">予想利益</th><th class="num">ROI</th><th class="num">損益分岐</th><th></th></tr></thead><tbody>${q.map((x,i)=>`<tr>
       <td class="meta">·${String(i+1).padStart(2,"0")}</td><td class="item"><span class="tag">${esc(x.genre)}</span><div class="title">${esc(x.mercari_title)}</div></td>
       <td class="num">${yen(x.buy_price_jpy)}</td><td class="num ${x.profit_jpy>=0?"pos":"neg"}">${yen(x.profit_jpy)}</td><td class="num">${pct(x.roi)}</td><td class="num">${yen(x.breakeven_buy_jpy)}</td>
-      <td class="num"><a class="btn buy sm" href="${esc(x.mercari_url)}" target="_blank" rel="noopener">仕入れる</a> <button class="btn sm" data-d="${esc(x.item_key)}">外す</button></td></tr>`).join("")}</tbody></table></div>
+      <td class="num"><a class="btn buy sm" href="${esc(x.mercari_url)}" target="_blank" rel="noopener">仕入れる</a>
+        <span class="meta">実際の価格</span><input class="price" type="number" data-price="${esc(x.item_key)}" value="${x.buy_price_jpy}">
+        <button class="btn dark sm" data-buy="${esc(x.item_key)}">仕入れ済みにする</button>
+        <button class="btn sm" data-d="${esc(x.item_key)}">外す</button></td></tr>`).join("")}</tbody></table></div>
     <div class="foot"><div><span class="meta">TOTAL</span><div class="sum">${yen(cost)} <span class="meta">→ 予想利益 ${yen(prof)}</span></div></div><a class="btn" href="/api/queue.csv">CSV 書き出し</a></div>`
     :'<div class="empty">仕入れキューは空です。「仕入れ候補」から追加してください。</div>'}</div>`;
 }
 function bindQueue(){document.querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>delQ(b.dataset.d))}
 
+function vHistory(){
+  const h=S.purchases, cost=h.reduce((a,x)=>a+x.actual_buy_jpy,0), prof=h.reduce((a,x)=>a+x.profit_jpy-(x.actual_buy_jpy-x.buy_price_jpy),0);
+  return `<h1>仕入れた${h.length}件の記録。</h1>
+  <p class="lead">「仕入れ済み」にした商品です。実際の仕入れ値で想定利益を計算し直しています。CSVで書き出せます。</p>
+  <div class="card">${h.length?`<div class="wide"><table><thead><tr><th>仕入日</th><th>アイテム</th><th class="num">実際の仕入</th><th class="num">想定売価</th><th class="num">想定利益</th><th></th></tr></thead><tbody>${h.map(x=>{const p=x.profit_jpy-(x.actual_buy_jpy-x.buy_price_jpy);return `<tr>
+      <td class="meta">${new Date(x.purchased_at).toLocaleDateString("ja-JP")}</td>
+      <td class="item"><span class="tag">${esc(x.genre)}</span><a class="title" href="${esc(x.mercari_url)}" target="_blank" rel="noopener">${esc(x.mercari_title)}</a></td>
+      <td class="num">${yen(x.actual_buy_jpy)}</td><td class="num">$${x.market_usd.toFixed(0)}</td><td class="num ${p>=0?"pos":"neg"}">${yen(p)}</td>
+      <td class="num"><button class="btn sm" data-undo="${esc(x.item_key)}" data-kind="purchased">取り消す</button></td></tr>`}).join("")}</tbody></table></div>
+    <div class="foot"><div><span class="meta">TOTAL</span><div class="sum">${yen(cost)} <span class="meta">→ 想定利益 ${yen(prof)}</span></div></div><a class="btn" href="/api/history.csv">CSV 書き出し</a></div>`
+    :'<div class="empty">まだ取引履歴はありません。仕入れキューで「仕入れ済みにする」を押すと記録されます。</div>'}</div>`;
+}
+function vDismissed(){
+  const d=S.dismissed, by={};
+  d.forEach(x=>by[x.reason]=(by[x.reason]||0)+1);
+  return `<h1>見送った${d.length}件。</h1>
+  <p class="lead">「仕入れない」を押した出品は、次回以降のスキャンでも候補に出なくなります。理由は精度改善のヒントになります（「商品違い」が多いジャンルは辞書・検索語を見直す）。</p>
+  <div class="chips">${Object.entries(by).map(([r,n])=>`<span class="chip">${esc(r)} <b>${n}</b></span>`).join("")}</div>
+  <div class="card" style="margin-top:10px">${d.length?`<div class="wide"><table><thead><tr><th>見送り日</th><th>アイテム</th><th>理由</th><th class="num">仕入</th><th class="num">想定利益</th><th></th></tr></thead><tbody>${d.map(x=>`<tr>
+      <td class="meta">${new Date(x.dismissed_at).toLocaleDateString("ja-JP")}</td>
+      <td class="item"><span class="tag">${esc(x.genre)}</span><a class="title" href="${esc(x.mercari_url)}" target="_blank" rel="noopener">${esc(x.mercari_title)}</a></td>
+      <td>${esc(x.reason)}</td><td class="num">${yen(x.buy_price_jpy)}</td><td class="num">${yen(x.profit_jpy)}</td>
+      <td class="num"><button class="btn sm" data-undo="${esc(x.item_key)}" data-kind="dismiss">候補に戻す</button></td></tr>`).join("")}</tbody></table></div>`
+    :'<div class="empty">見送った出品はありません。</div>'}</div>`;
+}
 function vRules(){
   const r=S.rules, f=r.fees||{}, th=r.thresholds||{};
   const row=(l,s,v)=>`<div class="r"><div>${l}<span>${s}</span></div><b>${v}</b></div>`;
@@ -394,7 +482,8 @@ function vRules(){
 }
 
 const VIEWS={dash:["OVERVIEW / ダッシュボード",vDash],map:["OVERVIEW / 収益機会マップ",vMap,bindMap],sim:["OVERVIEW / 資本シミュレーター",vSim,bindSim],
-  cands:["SIGNAL / 仕入れ候補",vCands],queue:["ACTION / 仕入れキュー",vQueue,bindQueue],rules:["INPUT / ジャンル・利益ルール",vRules]};
+  cands:["SIGNAL / 仕入れ候補",vCands],queue:["ACTION / 仕入れキュー",vQueue,bindQueue],
+  history:["ACTION / 取引履歴",vHistory],dismissed:["ACTION / 見送りリスト",vDismissed],rules:["INPUT / ジャンル・利益ルール",vRules]};
 function render(){
   if(!VIEWS[view]) view="dash";
   renderNav();
@@ -404,6 +493,7 @@ function render(){
   bindRows(); bind&&bind();
 }
 $("#scanBtn").onclick=scan;
+document.addEventListener("click",()=>{if(menuFor){menuFor=null;render()}});
 $("#q").oninput=()=>{if(view!=="cands"){view="cands"} render()};
 load();
 </script>

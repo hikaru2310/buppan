@@ -97,6 +97,10 @@ class AppConfig(BaseModel):
     web_port: int = 8000
     # 何時間以内に初めて見た出品を NEW とするか
     new_window_hours: int = 24
+    # メルカリ一覧の遅延読み込み対策のスクロール回数（多いほど件数↑・時間↑）
+    mercari_scroll_steps: int = 18
+    # eBay成約データの再利用時間（0で毎回取得）。eBayへのアクセス回数を減らす
+    ebay_cache_hours: float = 12
 
 
 class Config(BaseModel):

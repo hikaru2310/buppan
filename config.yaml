@@ -20,25 +20,124 @@ app:
   web_port: 8000
   # 何時間以内に新しく現れた出品を NEW とするか
   new_window_hours: 24
+  # メルカリ一覧のスクロール回数（多いほど1ジャンルあたりの件数↑）
+  mercari_scroll_steps: 18
+  # eBay成約データを何時間再利用するか（eBayへのアクセスを減らす）
+  ebay_cache_hours: 12
 
-# ジャンル定義（監視対象）。旧 targets: 形式もそのまま使えます。
+# ジャンル定義（監視対象）。増やすほど候補が増えます（スキャン時間も伸びます）。
+# 国際送料(shipping_cost_jpy)・梱包費(extra_buy_cost_jpy)はサイズ別の概算。実費に合わせて調整してください。
 genres:
+  - id: "gb-dmg"
+    name: "ゲームボーイ（初代 DMG-01）"
+    genre: "ゲーム機・レトロ"
+    mercari_query: "ゲームボーイ 本体 DMG-01"
+    ebay_query: "Nintendo Game Boy DMG-01 console"
+    shipping_cost_jpy: 2000
+    extra_buy_cost_jpy: 150
+  - id: "gb-pocket"
+    name: "ゲームボーイポケット"
+    genre: "ゲーム機・レトロ"
+    mercari_query: "ゲームボーイポケット 本体"
+    ebay_query: "Game Boy Pocket console MGB-001"
+    shipping_cost_jpy: 2000
+    extra_buy_cost_jpy: 150
+  - id: "gb-color"
+    name: "ゲームボーイカラー"
+    genre: "ゲーム機・レトロ"
+    mercari_query: "ゲームボーイカラー 本体"
+    ebay_query: "Game Boy Color console CGB-001"
+    shipping_cost_jpy: 2000
+    extra_buy_cost_jpy: 150
+  - id: "gba-sp"
+    name: "ゲームボーイアドバンスSP（AGS-101）"
+    genre: "ゲーム機・レトロ"
+    mercari_query: "ゲームボーイアドバンスSP AGS-101"
+    ebay_query: "Game Boy Advance SP AGS-101"
+    shipping_cost_jpy: 2000
+    extra_buy_cost_jpy: 150
   - id: "gbl-astroboy-box-mint"
-    name: "ゲームボーイライト アストロボーイ（箱あり・美品）"
-    genre: "ゲーム機・レトロゲーム"
-    mercari_query: "ゲームボーイライト アストロボーイ 箱 美品"
-    ebay_query: "Game Boy Light Astro Boy box"
-    # メルカリ側タイトルにこの語のどれかが無ければ除外（空なら制限なし）
-    include_keywords: []
-    # このジャンルだけの除外語（全体の exclude_keywords に追加）
-    exclude_keywords: []
-    # 梱包・雑費
-    extra_buy_cost_jpy: 200
-    # eBay販売時の国際送料（日本→海外の概算）
+    name: "ゲームボーイライト アストロボーイ"
+    genre: "ゲーム機・レトロ"
+    mercari_query: "ゲームボーイライト アストロボーイ"
+    ebay_query: "Game Boy Light Astro Boy"
     shipping_cost_jpy: 2500
-    # ジャンル別の下限（未指定なら thresholds の値）
-    # min_profit_jpy: 3000
-    # min_roi: 0.25
+    extra_buy_cost_jpy: 200
+  - id: "famicom"
+    name: "ファミコン本体"
+    genre: "ゲーム機・レトロ"
+    mercari_query: "ファミコン 本体 HVC-001"
+    ebay_query: "Famicom console HVC-001"
+    shipping_cost_jpy: 3000
+    extra_buy_cost_jpy: 200
+  - id: "super-famicom"
+    name: "スーパーファミコン本体"
+    genre: "ゲーム機・レトロ"
+    mercari_query: "スーパーファミコン 本体 SHVC-001"
+    ebay_query: "Super Famicom console SHVC-001"
+    shipping_cost_jpy: 3500
+    extra_buy_cost_jpy: 200
+  - id: "n64"
+    name: "NINTENDO64本体"
+    genre: "ゲーム機・レトロ"
+    mercari_query: "NINTENDO64 本体 NUS-001"
+    ebay_query: "Nintendo 64 console NUS-001 Japan"
+    shipping_cost_jpy: 3500
+    extra_buy_cost_jpy: 200
+  - id: "ds-lite"
+    name: "ニンテンドーDS Lite"
+    genre: "ゲーム機・携帯"
+    mercari_query: "ニンテンドーDS Lite 本体 USG-001"
+    ebay_query: "Nintendo DS Lite console USG-001"
+    shipping_cost_jpy: 2000
+    extra_buy_cost_jpy: 150
+  - id: "psp-3000"
+    name: "PSP-3000"
+    genre: "ゲーム機・携帯"
+    mercari_query: "PSP-3000 本体"
+    ebay_query: "Sony PSP-3000 console"
+    shipping_cost_jpy: 2000
+    extra_buy_cost_jpy: 150
+  - id: "nikon-fm2"
+    name: "Nikon FM2"
+    genre: "カメラ・フィルム"
+    mercari_query: "Nikon FM2 ボディ"
+    ebay_query: "Nikon FM2 film camera body"
+    shipping_cost_jpy: 3000
+    extra_buy_cost_jpy: 300
+  - id: "canon-ae1p"
+    name: "Canon AE-1 PROGRAM"
+    genre: "カメラ・フィルム"
+    mercari_query: "Canon AE-1 PROGRAM"
+    ebay_query: "Canon AE-1 Program film camera"
+    shipping_cost_jpy: 3000
+    extra_buy_cost_jpy: 300
+  - id: "olympus-om1"
+    name: "OLYMPUS OM-1"
+    genre: "カメラ・フィルム"
+    mercari_query: "オリンパス OM-1 ボディ"
+    ebay_query: "Olympus OM-1 film camera body"
+    shipping_cost_jpy: 3000
+    extra_buy_cost_jpy: 300
+  - id: "walkman-cassette"
+    name: "カセットウォークマン"
+    genre: "オーディオ"
+    mercari_query: "ウォークマン カセット WM"
+    ebay_query: "Sony Walkman cassette player WM"
+    shipping_cost_jpy: 2500
+    extra_buy_cost_jpy: 200
+  - id: "gshock-frogman"
+    name: "G-SHOCK フロッグマン"
+    genre: "腕時計"
+    mercari_query: "G-SHOCK フロッグマン GWF"
+    ebay_query: "Casio G-Shock Frogman GWF"
+    shipping_cost_jpy: 2500
+    extra_buy_cost_jpy: 200
+  # 例: ジャンル別の上書き
+  #   include_keywords: ["動作確認"]   # どれかを含む出品だけ対象
+  #   exclude_keywords: ["欠品"]       # このジャンルだけの除外語
+  #   min_profit_jpy: 3000
+  #   min_roi: 0.25
 
 fx:
   # 為替（JPY→USD）

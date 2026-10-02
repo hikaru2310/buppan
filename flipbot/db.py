@@ -100,6 +100,22 @@ def migrate(con: sqlite3.Connection) -> None:
           added_at TEXT NOT NULL,
           payload_json TEXT NOT NULL
         );
+
+        -- 「仕入れない」で見送った出品（理由はマッチ精度の改善にも使う）
+        CREATE TABLE IF NOT EXISTS dismissed (
+          item_key TEXT PRIMARY KEY,
+          dismissed_at TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          payload_json TEXT NOT NULL
+        );
+
+        -- 仕入れ済み（取引履歴）
+        CREATE TABLE IF NOT EXISTS purchases (
+          item_key TEXT PRIMARY KEY,
+          purchased_at TEXT NOT NULL,
+          actual_buy_jpy INTEGER NOT NULL,
+          payload_json TEXT NOT NULL
+        );
         """
     )
     con.commit()

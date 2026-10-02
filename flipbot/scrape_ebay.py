@@ -45,20 +45,35 @@ def _parse_usd(text: str) -> Optional[float]:
         return None
 
 
+_TITLE_JUNK_RE = re.compile(r"^(new listing|新規出品)\s*|\s*(opens in a new window or tab|新しいウィンドウまたはタブで開く)$", re.I)
+
+
 def _parse_ebay_li(li) -> Optional[EbaySold]:
-    a = li.select_one("a.s-item__link") or li.select_one('a[href*="/itm/"]')
+    """旧 s-item / 新 s-card（2025〜）の両方に対応。"""
+    a = (
+        li.select_one("a.s-item__link")
+        or li.select_one("a.su-card-container__header")
+        or li.select_one('a[href*="/itm/"]')
+    )
     if not a:
         return None
-    url = a.get("href") or ""
-    if not url.startswith("http"):
+    url = (a.get("href") or "").split("?")[0]
+    if not url.startswith("http") or "/itm/" not in url or url.endswith("/itm/123456"):
         return None
-    title_el = li.select_one(".s-item__title") or li.select_one('[role="heading"]') or a
-    title = title_el.get_text(" ", strip=True) if title_el else ""
-    if not title or title.lower() == "shop on ebay":
+    title_el = (
+        li.select_one(".s-card__title")
+        or li.select_one(".s-item__title")
+        or li.select_one('[role="heading"]')
+        or a
+    )
+    title = _TITLE_JUNK_RE.sub("", title_el.get_text(" ", strip=True)) if title_el else ""
+    if not title or title.lower() in ("shop on ebay", "results matching fewer words"):
         return None
 
-    price_el = li.select_one(".s-item__price") or li.select_one('[class*="s-item__price"]')
+    price_el = li.select_one(".s-card__price, .s-item__price") or li.select_one('[class*="price"]')
     price_text = price_el.get_text(" ", strip=True) if price_el else li.get_text(" ", strip=True)
+    if " to " in price_text:  # 価格帯表示（バリエーション）は相場がぶれるので除外
+        return None
     price_usd = _parse_usd(price_text)
     if price_usd is None:
         return None
@@ -67,9 +82,15 @@ def _parse_ebay_li(li) -> Optional[EbaySold]:
     ship_el = li.select_one(".s-item__shipping, .s-item__logisticsCost") or li.select_one(
         '[class*="s-item__shipping"], [class*="logisticsCost"]'
     )
-    if ship_el:
-        ship_text = ship_el.get_text(" ", strip=True)
-        if "Free" in ship_text or "FREE" in ship_text or "無料" in ship_text:
+    ship_text = ship_el.get_text(" ", strip=True) if ship_el else ""
+    if not ship_text:
+        # s-card は配送料が独立クラスを持たないので、行テキストから拾う
+        for t in li.stripped_strings:
+            if re.search(r"delivery|shipping|送料", t, re.I):
+                ship_text = t
+                break
+    if ship_text:
+        if re.search(r"free|無料", ship_text, re.I):
             shipping_usd = 0.0
         else:
             shipping_usd = _parse_usd(ship_text)
@@ -88,9 +109,9 @@ def parse_ebay_sold_html(html: str) -> list[EbaySold]:
     soup = BeautifulSoup(html, "lxml")
     items: list[EbaySold] = []
 
-    lis = list(soup.select("li.s-item"))
+    lis = list(soup.select("li.s-card, li.s-item"))
     if not lis:
-        lis = list(soup.find_all("li", class_=re.compile(r"\bs-item\b")))
+        lis = [li for li in soup.find_all("li") if li.select_one('a[href*="/itm/"]')]
 
     for li in lis:
         sold = _parse_ebay_li(li)
@@ -106,6 +127,14 @@ def parse_ebay_sold_html(html: str) -> list[EbaySold]:
         seen.add(it.url)
         out.append(it)
     return out
+
+
+def build_ebay_research_url(query: str) -> str:
+    """Terapeak（eBay公式の販売実績リサーチ。セラーハブにログインが必要）。"""
+    return (
+        "https://www.ebay.com/sh/research?marketplace=EBAY-US&tabName=SOLD&dayRange=90&keywords="
+        + quote_plus(query)
+    )
 
 
 def median_total_usd(items: list[EbaySold], *, min_samples: int = 3) -> Optional[float]:

@@ -99,6 +99,24 @@
     "price_jpy": 3000,
     "shipping_included": true,
     "item_id": "sample-retro-gb-3"
+   },
+   {
+    "title": "ゲームボーイ DMG-01 本体 動作確認済み 液晶綺麗",
+    "price_jpy": 4200,
+    "shipping_included": true,
+    "item_id": "sample-retro-gb-4"
+   },
+   {
+    "title": "初代ゲームボーイ DMG-01 本体 電池蓋あり",
+    "price_jpy": 3800,
+    "shipping_included": true,
+    "item_id": "sample-retro-gb-5"
+   },
+   {
+    "title": "任天堂 ゲームボーイ DMG-01 グレー 本体",
+    "price_jpy": 5500,
+    "shipping_included": true,
+    "item_id": "sample-retro-gb-6"
    }
   ],
   "retro-gbasp": [
@@ -119,6 +137,24 @@
     "price_jpy": 4200,
     "shipping_included": true,
     "item_id": "sample-retro-gbasp-2"
+   },
+   {
+    "title": "ゲームボーイアドバンスSP AGS-101 本体 プラチナシルバー",
+    "price_jpy": 7800,
+    "shipping_included": true,
+    "item_id": "sample-retro-gbasp-3"
+   },
+   {
+    "title": "GBA SP AGS-101 バックライト 本体 動作品",
+    "price_jpy": 8500,
+    "shipping_included": true,
+    "item_id": "sample-retro-gbasp-4"
+   },
+   {
+    "title": "ゲームボーイアドバンスSP AGS-101 ブラック",
+    "price_jpy": 9200,
+    "shipping_included": true,
+    "item_id": "sample-retro-gbasp-5"
    }
   ],
   "gbl-astroboy": [
@@ -133,6 +169,12 @@
     "price_jpy": 24000,
     "shipping_included": true,
     "item_id": "sample-gbl-astroboy-1"
+   },
+   {
+    "title": "ゲームボーイライト アストロボーイ 箱 説明書 美品 限定",
+    "price_jpy": 35000,
+    "shipping_included": true,
+    "item_id": "sample-gbl-astroboy-2"
    }
   ],
   "famicom": [
@@ -147,6 +189,18 @@
     "price_jpy": 9800,
     "shipping_included": true,
     "item_id": "sample-famicom-1"
+   },
+   {
+    "title": "ファミコン 本体 HVC-001 AV化 動作確認済",
+    "price_jpy": 11000,
+    "shipping_included": true,
+    "item_id": "sample-famicom-2"
+   },
+   {
+    "title": "任天堂 ファミリーコンピュータ HVC-001 AV仕様",
+    "price_jpy": 12500,
+    "shipping_included": true,
+    "item_id": "sample-famicom-3"
    }
   ],
   "switch-oled": [
@@ -161,6 +215,12 @@
     "price_jpy": 36800,
     "shipping_included": true,
     "item_id": "sample-switch-oled-1"
+   },
+   {
+    "title": "Nintendo Switch 有機ELモデル ホワイト 本体のみ",
+    "price_jpy": 29800,
+    "shipping_included": true,
+    "item_id": "sample-switch-oled-2"
    }
   ],
   "nikon-d750": [
@@ -175,6 +235,18 @@
     "price_jpy": 61000,
     "shipping_included": true,
     "item_id": "sample-nikon-d750-1"
+   },
+   {
+    "title": "Nikon D750 ボディ 美品 ショット数約8000",
+    "price_jpy": 58000,
+    "shipping_included": true,
+    "item_id": "sample-nikon-d750-2"
+   },
+   {
+    "title": "ニコン D750 ボディ バッテリー付き",
+    "price_jpy": 55000,
+    "shipping_included": true,
+    "item_id": "sample-nikon-d750-3"
    }
   ],
   "canon-5d4": [
@@ -183,6 +255,12 @@
     "price_jpy": 168000,
     "shipping_included": true,
     "item_id": "sample-canon-5d4-0"
+   },
+   {
+    "title": "Canon EOS 5D Mark IV ボディ 動作品",
+    "price_jpy": 142000,
+    "shipping_included": true,
+    "item_id": "sample-canon-5d4-1"
    }
   ],
   "gshock-gwf": [
@@ -197,6 +275,18 @@
     "price_jpy": 29800,
     "shipping_included": true,
     "item_id": "sample-gshock-gwf-1"
+   },
+   {
+    "title": "カシオ G-SHOCK GWF-A1000 フロッグマン 箱付き",
+    "price_jpy": 27800,
+    "shipping_included": true,
+    "item_id": "sample-gshock-gwf-2"
+   },
+   {
+    "title": "G-SHOCK フロッグマン GWF-A1000-1AJF 未使用",
+    "price_jpy": 34000,
+    "shipping_included": true,
+    "item_id": "sample-gshock-gwf-3"
    }
   ]
  },
@@ -243,6 +333,11 @@
     "title": "Game Boy Advance SP AGS-001 Console",
     "price_usd": 88,
     "shipping_usd": 0
+   },
+   {
+    "title": "Nintendo Game Boy Advance SP AGS-101 Platinum Silver",
+    "price_usd": 162,
+    "shipping_usd": 0
    }
   ],
   "gbl-astroboy": [
@@ -282,6 +377,11 @@
     "title": "Famicom console junk for parts",
     "price_usd": 35,
     "shipping_usd": 15
+   },
+   {
+    "title": "Nintendo Famicom HVC-001 Console AV Mod",
+    "price_usd": 158,
+    "shipping_usd": 15
    }
   ],
   "switch-oled": [
@@ -298,6 +398,16 @@
    {
     "title": "Nintendo Switch Lite Gray",
     "price_usd": 160,
+    "shipping_usd": 0
+   },
+   {
+    "title": "Nintendo Switch OLED Console Only White no box",
+    "price_usd": 255,
+    "shipping_usd": 0
+   },
+   {
+    "title": "Nintendo Switch OLED White console only",
+    "price_usd": 262,
     "shipping_usd": 0
    }
   ],
