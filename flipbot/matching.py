@@ -1,6 +1,7 @@
 """Mercari 出品 ↔ eBay 成約品の突き合わせ（精度の本丸）。"""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from statistics import median
 from typing import Generic, Optional, Sequence, TypeVar
@@ -38,6 +39,24 @@ def match_score(mercari_title: str, ebay_title: str) -> float:
     elif mm and not em:
         score *= 0.85
 
+    # レンズの焦点距離・F値が違えば別商品（50mm F1.4 と F1.8 は相場が倍違う）
+    for rx, factor in ((_FOCAL_RE, 0.2), (_APERTURE_RE, 0.25)):
+        a, b = set(rx.findall(m_norm)), set(rx.findall(e_norm))
+        if a and b and not (a & b):
+            score *= factor
+    # 型式の末尾違い（GR III ↔ GR IIIx、Ai ↔ Ai-s）: メルカリ側の語が eBay 側では接尾辞付きでしか出てこない
+    #   （数字を含む型番は上の型番判定で扱うのでここでは除外）
+    words_m = {t for t in mt if not any(ch.isdigit() for ch in t)}
+    words_e = {u for u in et if not any(ch.isdigit() for ch in u)}
+    if any(len(t) >= 2 and t not in et and any(u.startswith(t) and 0 < len(u) - len(t) <= 2 for u in words_e) for t in words_m) \
+            or any(len(u) >= 2 and u not in mt and any(t.startswith(u) and 0 < len(t) - len(u) <= 2 for t in words_m) for u in words_e):
+        score *= 0.4
+    # 短い型式（T2/T3, M6/M3 など英字1〜2字+数字1〜2桁）の食い違い
+    short_m = {t for t in mt if _SHORT_MODEL_RE.match(t)}
+    short_e = {u for u in et if _SHORT_MODEL_RE.match(u)}
+    if short_m and not (short_m & et) and any(u[:1] == t[:1] for t in short_m for u in short_e):
+        score *= 0.3
+
     # 箱あり/本体のみ の食い違いは相場が大きく変わるので減点
     # （"body only" はレンズなしの意味なので箱の有無とは無関係）
     m_box, e_box = "box" in mt, bool({"box", "cib"} & et) and "no box" not in e_norm
@@ -46,6 +65,11 @@ def match_score(mercari_title: str, ebay_title: str) -> float:
     if (m_only and e_box) or (m_box and e_only):
         score *= 0.5
     return round(min(score, 1.0), 3)
+
+
+_FOCAL_RE = re.compile(r"(\d{2,3})\s?mm")
+_SHORT_MODEL_RE = re.compile(r"^[a-z]{1,2}\d{1,2}$")
+_APERTURE_RE = re.compile(r"\bf\s?(\d{1,2}(?:\.\d)?)\b")
 
 
 def _models_overlap(a: set[str], b: set[str]) -> bool:

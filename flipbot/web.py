@@ -10,8 +10,12 @@ POST /api/dismiss         仕入れない（見送り）        {"item_key": ...
 DELETE /api/dismiss?key=  見送りを取り消す
 POST /api/purchased       仕入れ済みにする（取引履歴へ）{"item_key": ..., "actual_buy_jpy": ...}
 DELETE /api/purchased?key= 取引履歴から戻す
+POST /api/sku            SKUの工程を進める         {"sku": ..., "action": arrive/inspect_pass/.../pay, "fields": {...}}
+POST /api/plan-sync       事業計画シートを今すぐ読み直す
+POST /api/settings        画面入力の設定値（現金残高など）{"cash_jpy": ...}
 GET  /api/queue.csv       仕入れキューを CSV で書き出し
-GET  /api/history.csv     取引履歴を CSV で書き出し
+GET  /api/skus.csv        全SKU（在庫・取引）を CSV で書き出し
+GET  /api/kpi.tsv?month=N 計画シート「KPI実績」に貼り付ける1行（タブ区切り）
 """
 from __future__ import annotations
 
@@ -27,13 +31,19 @@ from urllib.parse import parse_qs, urlparse
 
 from rich.console import Console
 
+import yaml
+
 from . import db
+from . import fx as fx_mod
+from . import ops
+from . import plan as plan_mod
 from .config import Config, load_config
 from .interactive import ebay_login_until_ready
 from .pipeline import scan_all
 from .sources import sample_targets
 
 INDEX_HTML = Path(__file__).parent / "web" / "index.html"
+ENV_YAML = Path(__file__).parent / "knowledge" / "environment.yaml"
 
 
 class AppState:
@@ -73,7 +83,7 @@ class AppState:
     def start_scan(self) -> bool:
         def scan() -> None:
             try:
-                asyncio.run(scan_all(self.cfg, data_source=self.source, sort_by="roi"))
+                asyncio.run(scan_all(self.cfg, data_source=self.source, sort_by="score"))
                 self.last_error = None
             except Exception as e:  # noqa: BLE001 - 画面に出す
                 self.last_error = repr(e)
@@ -125,9 +135,22 @@ class AppState:
                 {"purchased_at": r["purchased_at"], "actual_buy_jpy": r["actual_buy_jpy"], **json.loads(r["payload_json"])}
                 for r in con.execute("SELECT * FROM purchases ORDER BY purchased_at DESC")
             ]
+            rate, rate_src, rate_at = fx_mod.current_rate(cfg)
+            cfg.fx.jpy_per_usd = round(rate, 2)
+            plan = plan_mod.load(cfg)
+            m = ops.metrics(con, cfg, plan)
         finally:
             con.close()
+        try:
+            env = yaml.safe_load(ENV_YAML.read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001
+            env = {"error": str(e)}
         return {
+            "fx": {"rate": rate, "source": rate_src, "at": rate_at},
+            "plan": {k: v for k, v in plan.items() if k not in ("benchmarks",)},
+            "ops": m,
+            "env": env,
+            "costs": cfg.costs.model_dump(),
             "scanning": self.busy == "scan",
             "logging_in": self.busy == "login",
             "login_result": self.login_result,
@@ -147,6 +170,8 @@ class AppState:
                     t.model_dump()
                     for t in (sample_targets() if summary.get("data_source") == "sample" else cfg.all_targets)
                 ],
+                # 戦略ページ用：サンプル表示中でも config.yaml の監視ジャンルを使う
+                "config_genres": [t.model_dump() for t in cfg.all_targets],
                 "data_source": self.source or cfg.app.data_source,
             },
         }
@@ -173,6 +198,7 @@ class AppState:
                 (item_key, db.utc_now_iso(), payload),
             )
             con.execute("DELETE FROM dismissed WHERE item_key=?", (item_key,))
+            db.log_event(con, "queue", item_key)
             con.commit()
             return True
         finally:
@@ -190,28 +216,77 @@ class AppState:
                 (item_key, db.utc_now_iso(), reason or "その他", payload),
             )
             con.execute("DELETE FROM purchase_queue WHERE item_key=?", (item_key,))
+            db.log_event(con, "dismiss", item_key)
             con.commit()
             return True
         finally:
             con.close()
 
-    def purchased(self, item_key: str, actual_buy_jpy: Optional[int]) -> bool:
+    def purchased(self, item_key: str, actual_buy_jpy: Optional[int]) -> Optional[str]:
+        """仕入れ確定 → SKUを採番して「到着待ち」で在庫管理へ。"""
         con = self._con()
         try:
             payload = self._latest_payload(con, item_key)
             if not payload:
-                return False
+                return None
+            if con.execute("SELECT 1 FROM skus WHERE item_key=?", (item_key,)).fetchone():
+                return None
             p = json.loads(payload)
-            con.execute(
-                "INSERT INTO purchases(item_key, purchased_at, actual_buy_jpy, payload_json) VALUES(?, ?, ?, ?) "
-                "ON CONFLICT(item_key) DO NOTHING",
-                (item_key, db.utc_now_iso(), int(actual_buy_jpy or p["buy_price_jpy"]), payload),
-            )
+            sku = ops.create_from_candidate(con, p, actual_buy_jpy=actual_buy_jpy, category=p.get("category"))
             con.execute("DELETE FROM purchase_queue WHERE item_key=?", (item_key,))
             con.commit()
-            return True
+            return sku
         finally:
             con.close()
+
+    def sku_action(self, sku: str, action: str, fields: dict[str, Any]) -> tuple[bool, str]:
+        con = self._con()
+        try:
+            if action == "delete":
+                con.execute("DELETE FROM skus WHERE sku=?", (sku,))
+                con.commit()
+                return True, "OK"
+            return ops.apply_action(con, sku, action, fields)
+        finally:
+            con.close()
+
+    def set_setting(self, key: str, value: Any) -> None:
+        con = self._con()
+        try:
+            con.execute("INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                        (key, "" if value is None else str(value)))
+            con.commit()
+        finally:
+            con.close()
+
+    def kpi_tsv(self, month: Optional[int]) -> str:
+        """計画シート「KPI実績」の列順で1行（計画値はシートの値、差異=実績−計画）。"""
+        snap = self.snapshot()
+        o, plan = snap["ops"], snap["plan"]
+        idx = month or o["month_index"]
+        a = next((x for x in o["months"] if x["month"] == idx), None) or {}
+        k = next((x for x in plan.get("kpi_plan", []) if int(x.get("月", 0) or 0) == idx), {})
+        pm = next((x for x in plan.get("monthly", []) if int(x.get("月", 0) or 0) == idx), {})
+        ind = o["indicators"]
+        fixed = pm.get("固定費(万円)") or 0
+        op = round(a["contribution_man"] - fixed, 1) if a.get("contribution_man") is not None else ""
+        def diff(x, y):
+            return round(x - y, 1) if isinstance(x, (int, float)) and isinstance(y, (int, float)) else ""
+        pct = lambda v: f"{v*100:.1f}%" if isinstance(v, (int, float)) else ""  # noqa: E731
+        row = [
+            idx,
+            k.get("販売数_計画", ""), a.get("sales", ""), diff(a.get("sales"), k.get("販売数_計画")),
+            k.get("売上_計画(万円)", ""), a.get("revenue_man", ""), diff(a.get("revenue_man"), k.get("売上_計画(万円)")),
+            k.get("営業利益_計画(万円)", ""), op, diff(op, k.get("営業利益_計画(万円)")),
+            k.get("在庫日数_計画", ""), a.get("inventory_days"), diff(a.get("inventory_days"), k.get("在庫日数_計画")),
+            k.get("貢献利益/件_計画", ""), a.get("profit_per_unit"), diff(a.get("profit_per_unit"), k.get("貢献利益/件_計画")),
+            k.get("仕入成功数_計画", ""), a.get("purchases", ""), diff(a.get("purchases"), k.get("仕入成功数_計画")),
+            pct(ind.get("return_rate")),
+            pct(1 - ind["mispurchase_rate"]) if ind.get("mispurchase_rate") is not None else "",
+            pct(ind.get("forecast_error")),
+            pct(ind.get("over90_rate")),
+        ]
+        return "\t".join("" if v is None else str(v) for v in row) + "\n"
 
     def delete(self, table: str, item_key: str) -> None:
         assert table in ("purchase_queue", "dismissed", "purchases")
@@ -226,7 +301,15 @@ class AppState:
         buf = io.StringIO()
         w = csv.writer(buf)
         snap = self.snapshot()
-        if kind == "queue":
+        if kind == "skus":
+            cols = ["sku", "status_label", "category", "genre", "title", "purchased_at", "buy_price_jpy", "predicted_sell_usd",
+                    "predicted_profit_jpy", "arrived_at", "inspection", "defect_reason", "listed_at", "list_price_usd", "sold_at",
+                    "sold_price_usd", "buyer_country", "shipped_at", "carrier", "tracking", "shipping_cost_jpy", "duty_jpy",
+                    "paid_at", "payout_jpy", "realized_jpy", "returned_at", "return_reason", "mercari_url", "ebay_url"]
+            w.writerow(cols)
+            for x in snap["ops"]["skus"]:
+                w.writerow([x.get(c, "") for c in cols])
+        elif kind == "queue":
             w.writerow(["追加日時", "ジャンル", "タイトル", "仕入(円)", "想定売価(USD)", "利益(円)", "ROI", "損益分岐(円)", "メルカリURL"])
             for q in snap["queue"]:
                 w.writerow([q["added_at"], q["genre"], q["mercari_title"], q["buy_price_jpy"], q["market_usd"],
@@ -261,16 +344,28 @@ def _make_handler(state: AppState):
             path = urlparse(self.path).path
             if path in ("/", "/index.html"):
                 self._send(200, INDEX_HTML.read_bytes(), "text/html; charset=utf-8")
+            elif path.startswith("/static/"):
+                name = path[len("/static/"):]
+                f = INDEX_HTML.parent / name
+                ctype = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}.get(f.suffix)
+                if ctype and "/" not in name and f.is_file():
+                    self._send(200, f.read_bytes(), ctype)
+                else:
+                    self._send(404, b"not found", "text/plain")
             elif path == "/api/state":
                 self._json(state.snapshot())
-            elif path in ("/api/queue.csv", "/api/history.csv"):
-                kind = "queue" if "queue" in path else "history"
+            elif path in ("/api/queue.csv", "/api/history.csv", "/api/skus.csv"):
+                kind = "queue" if "queue" in path else "skus" if "skus" in path else "history"
                 self._send(
                     200,
                     state.to_csv(kind).encode("utf-8"),
                     "text/csv; charset=utf-8",
-                    {"Content-Disposition": f'attachment; filename="{"purchase_queue" if kind == "queue" else "purchase_history"}.csv"'},
+                    {"Content-Disposition": f'attachment; filename="{kind}.csv"'},
                 )
+            elif path == "/api/kpi.tsv":
+                q = parse_qs(urlparse(self.path).query)
+                month = int(q["month"][0]) if q.get("month") else None
+                self._send(200, state.kpi_tsv(month).encode("utf-8"), "text/plain; charset=utf-8")
             else:
                 self._send(404, b"not found", "text/plain")
 
@@ -291,8 +386,19 @@ def _make_handler(state: AppState):
                 self._json({"ok": ok}, 200 if ok else 404)
             elif path == "/api/purchased":
                 price = body.get("actual_buy_jpy")
-                ok = state.purchased(key, int(price) if price not in (None, "") else None)
-                self._json({"ok": ok}, 200 if ok else 404)
+                sku = state.purchased(key, int(float(price)) if price not in (None, "") else None)
+                self._json({"ok": bool(sku), "sku": sku}, 200 if sku else 404)
+            elif path == "/api/sku":
+                ok, msg = state.sku_action(str(body.get("sku", "")), str(body.get("action", "")), body.get("fields") or {})
+                self._json({"ok": ok, "message": msg}, 200 if ok else 400)
+            elif path == "/api/plan-sync":
+                p = plan_mod.load(state.cfg, force=True)
+                self._json({"ok": "error" not in p, "message": p.get("error") or f"同期しました（{p.get('_synced_at')}）"})
+            elif path == "/api/settings":
+                for k in ("cash_jpy",):
+                    if k in body:
+                        state.set_setting(k, body[k])
+                self._json({"ok": True})
             else:
                 self._send(404, b"not found", "text/plain")
 

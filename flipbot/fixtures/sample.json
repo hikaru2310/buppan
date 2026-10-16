@@ -7,7 +7,8 @@
    "mercari_query": "ゲームボーイ 本体 DMG-01",
    "ebay_query": "Game Boy DMG-01 console",
    "shipping_cost_jpy": 1800,
-   "extra_buy_cost_jpy": 100
+   "extra_buy_cost_jpy": 100,
+   "category": "ゲーム・限定品"
   },
   {
    "id": "retro-gbasp",
@@ -16,7 +17,8 @@
    "mercari_query": "ゲームボーイアドバンスSP AGS-101",
    "ebay_query": "Game Boy Advance SP AGS-101",
    "shipping_cost_jpy": 1800,
-   "extra_buy_cost_jpy": 100
+   "extra_buy_cost_jpy": 100,
+   "category": "ゲーム・限定品"
   },
   {
    "id": "gbl-astroboy",
@@ -25,7 +27,8 @@
    "mercari_query": "ゲームボーイライト アストロボーイ",
    "ebay_query": "Game Boy Light Astro Boy",
    "shipping_cost_jpy": 2500,
-   "extra_buy_cost_jpy": 200
+   "extra_buy_cost_jpy": 200,
+   "category": "ゲーム・限定品"
   },
   {
    "id": "famicom",
@@ -34,7 +37,8 @@
    "mercari_query": "ファミコン 本体",
    "ebay_query": "Famicom console HVC-001",
    "shipping_cost_jpy": 2800,
-   "extra_buy_cost_jpy": 150
+   "extra_buy_cost_jpy": 150,
+   "category": "ゲーム・限定品"
   },
   {
    "id": "switch-oled",
@@ -44,7 +48,8 @@
    "ebay_query": "Nintendo Switch OLED white",
    "shipping_cost_jpy": 4800,
    "extra_buy_cost_jpy": 200,
-   "min_roi": 0.1
+   "min_roi": 0.1,
+   "category": "ゲーム・限定品"
   },
   {
    "id": "nikon-d750",
@@ -53,7 +58,8 @@
    "mercari_query": "Nikon D750 ボディ",
    "ebay_query": "Nikon D750 body",
    "shipping_cost_jpy": 3600,
-   "extra_buy_cost_jpy": 300
+   "extra_buy_cost_jpy": 300,
+   "category": "カメラ・交換レンズ"
   },
   {
    "id": "canon-5d4",
@@ -62,7 +68,8 @@
    "mercari_query": "Canon EOS 5D Mark IV",
    "ebay_query": "Canon EOS 5D Mark IV body",
    "shipping_cost_jpy": 3600,
-   "extra_buy_cost_jpy": 300
+   "extra_buy_cost_jpy": 300,
+   "category": "カメラ・交換レンズ"
   },
   {
    "id": "gshock-gwf",
@@ -71,7 +78,8 @@
    "mercari_query": "G-SHOCK フロッグマン GWF-A1000",
    "ebay_query": "Casio G-Shock Frogman GWF-A1000",
    "shipping_cost_jpy": 2200,
-   "extra_buy_cost_jpy": 150
+   "extra_buy_cost_jpy": 150,
+   "category": "その他型番商品"
   }
  ],
  "mercari": {

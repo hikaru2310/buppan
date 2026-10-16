@@ -16,8 +16,26 @@ class MercariFees(BaseModel):
 class EbayFees(BaseModel):
     final_value_fee_rate: float = 0.1325
     payment_fixed_fee_usd: float = 0.30
+    # 日本登録セラーの海外手数料（International fee）。eBay日本語FAQの案内値
+    international_fee_rate: float = 0.0135
     # Payoneer / Wise の USD→JPY 換金スプレッド
     payout_fx_spread_rate: float = 0.02
+    # Promoted Listings 等の広告費（売価比）。事業計画: 1,200円/62,000円 ≒ 2%
+    ad_rate: float = 0.02
+
+
+class Costs(BaseModel):
+    """事業計画シート「ユニットエコノミクス」に合わせた1件あたりの費用。"""
+
+    # 梱包資材（箱・緩衝材）
+    packing_material_jpy: int = 500
+    # 検品・撮影・出品・発送の作業費（外注換算。自分でやる場合も機会費用として計上）
+    labor_jpy: int = 1500
+    # 返品・値下げ・為替の引当（売価比）。事業計画: 1,000円/62,000円 ≒ 1.6%
+    reserve_rate: float = 0.016
+    # 米国向けDDP: 関税はセラー負担。米国の買い手比率 × 関税率 を売価比で見込む
+    us_buyer_share: float = 0.5
+    us_duty_rate: float = 0.10
 
 
 class Fees(BaseModel):
@@ -27,6 +45,18 @@ class Fees(BaseModel):
 
 class Fx(BaseModel):
     jpy_per_usd: float = 150.0
+    # true なら為替APIから自動取得（失敗時は jpy_per_usd）
+    auto: bool = True
+
+
+class PlanSource(BaseModel):
+    """事業計画マスター（Googleスプレッドシート）。数値の正本はシート。"""
+
+    sheet_id: Optional[str] = None
+    # 計画の1か月目（例: "2026-09"）
+    start_month: str = "2026-09"
+    # 何時間ごとにシートを読み直すか
+    refresh_hours: float = 6
 
 
 class Target(BaseModel):
@@ -45,7 +75,13 @@ class Target(BaseModel):
     # 候補に載せる下限（未指定ならグローバル thresholds を使用）
     min_profit_jpy: Optional[int] = None
     min_roi: Optional[float] = None
-    extra_buy_cost_jpy: int = 0  # 梱包・雑費
+    # 事業計画シート「カテゴリ別採算」のカテゴリ名（下限利益・資金配分の判定に使う）
+    category: Optional[str] = None
+    # 事業計画シート「当たりジャンル商品DB」のID（例: P001）
+    plan_ids: list[str] = Field(default_factory=list)
+    # 米国の関税率の上書き（品目で異なる場合）
+    us_duty_rate: Optional[float] = None
+    extra_buy_cost_jpy: int = 0  # 梱包・雑費（Costs に加えてジャンル固有に足す分）
     shipping_cost_jpy: int = 0  # 国際送料
     # ジャンル別の eBay FVF 上書き
     final_value_fee_rate: Optional[float] = None
@@ -56,7 +92,9 @@ class Target(BaseModel):
 
 
 class Thresholds(BaseModel):
+    # 貢献利益の下限（カテゴリ別の下限が計画シートにあればそちらを優先）
     min_profit_jpy: int = 2000
+    # 仕入ROI（貢献利益 ÷ 仕入価格）の下限
     min_roi: float = 0.20
     # Mercari品 ↔ eBay成約品 のマッチスコア下限（0〜1）
     match_threshold: float = 0.55
@@ -110,6 +148,8 @@ class Config(BaseModel):
     targets: list[Target] = Field(default_factory=list)
     fx: Fx = Field(default_factory=Fx)
     fees: Fees = Field(default_factory=Fees)
+    costs: Costs = Field(default_factory=Costs)
+    plan: PlanSource = Field(default_factory=PlanSource)
     thresholds: Thresholds = Field(default_factory=Thresholds)
     # 全ジャンル共通の除外語
     exclude_keywords: list[str] = Field(

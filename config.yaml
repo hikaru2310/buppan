@@ -25,123 +25,165 @@ app:
   # eBay成約データを何時間再利用するか（eBayへのアクセスを減らす）
   ebay_cache_hours: 12
 
-# ジャンル定義（監視対象）。増やすほど候補が増えます（スキャン時間も伸びます）。
-# 国際送料(shipping_cost_jpy)・梱包費(extra_buy_cost_jpy)はサイズ別の概算。実費に合わせて調整してください。
+# ジャンル定義（監視対象）。事業計画シート「当たりジャンル商品DB」の優先度S/Aを中心に構成。
+#   category : 計画シート「カテゴリ別採算」のカテゴリ名 → 貢献利益の下限・資金配分の判定に使う
+#   plan_ids : 計画シート「当たりジャンル商品DB」のID（どの仮説を検証しているか）
+#   shipping_cost_jpy : 国際送料の見込み（サイズ別の概算。実費で更新）
+# ※ 2026-10 に低単価ゲーム機（初代GB・ファミコン等）を外しました（ゲーム・限定品の貢献利益下限8,000円に届かないため）
 genres:
-  - id: "gb-dmg"
-    name: "ゲームボーイ（初代 DMG-01）"
-    genre: "ゲーム機・レトロ"
-    mercari_query: "ゲームボーイ 本体 DMG-01"
-    ebay_query: "Nintendo Game Boy DMG-01 console"
-    shipping_cost_jpy: 2000
-    extra_buy_cost_jpy: 150
-  - id: "gb-pocket"
-    name: "ゲームボーイポケット"
-    genre: "ゲーム機・レトロ"
-    mercari_query: "ゲームボーイポケット 本体"
-    ebay_query: "Game Boy Pocket console MGB-001"
-    shipping_cost_jpy: 2000
-    extra_buy_cost_jpy: 150
-  - id: "gb-color"
-    name: "ゲームボーイカラー"
-    genre: "ゲーム機・レトロ"
-    mercari_query: "ゲームボーイカラー 本体"
-    ebay_query: "Game Boy Color console CGB-001"
-    shipping_cost_jpy: 2000
-    extra_buy_cost_jpy: 150
+  - id: "nikon-ais-50-14"
+    name: "Nikon Ai-s 50mm F1.4"
+    category: "カメラ・交換レンズ"
+    plan_ids: ["P001"]
+    mercari_query: "Nikon Ai-s 50mm F1.4"
+    ebay_query: "Nikon Ai-s 50mm f/1.4 lens"
+    shipping_cost_jpy: 3500
+  - id: "nikon-ais-105-25"
+    name: "Nikon Ai-s 105mm F2.5"
+    category: "カメラ・交換レンズ"
+    plan_ids: ["P001"]
+    mercari_query: "Nikon Ai-s 105mm F2.5"
+    ebay_query: "Nikon Ai-s 105mm f/2.5 lens"
+    shipping_cost_jpy: 3500
+  - id: "canon-fd-50-14"
+    name: "Canon FD 50mm F1.4"
+    category: "カメラ・交換レンズ"
+    plan_ids: ["P002"]
+    mercari_query: "Canon FD 50mm F1.4"
+    ebay_query: "Canon FD 50mm f/1.4 lens"
+    shipping_cost_jpy: 3500
+  - id: "canon-fd-85-18"
+    name: "Canon FD 85mm F1.8"
+    category: "カメラ・交換レンズ"
+    plan_ids: ["P002"]
+    mercari_query: "Canon FD 85mm F1.8"
+    ebay_query: "Canon FD 85mm f/1.8 lens"
+    shipping_cost_jpy: 3500
+  - id: "pentax67-105"
+    name: "PENTAX 67 105mm F2.4"
+    category: "カメラ・交換レンズ"
+    plan_ids: ["P003"]
+    mercari_query: "PENTAX 67 105mm F2.4"
+    ebay_query: "Pentax 67 105mm f/2.4 lens"
+    shipping_cost_jpy: 5000
+  - id: "contax-t2"
+    name: "CONTAX T2"
+    category: "カメラ・交換レンズ"
+    plan_ids: ["P004"]
+    mercari_query: "CONTAX T2"
+    ebay_query: "Contax T2 film camera"
+    shipping_cost_jpy: 4000
+  - id: "ricoh-gr3"
+    name: "RICOH GR III"
+    category: "カメラ・交換レンズ"
+    plan_ids: ["P005"]
+    mercari_query: "RICOH GR III"
+    ebay_query: "Ricoh GR III digital camera"
+    shipping_cost_jpy: 4000
+  - id: "fujifilm-x100v"
+    name: "FUJIFILM X100V"
+    category: "カメラ・交換レンズ"
+    plan_ids: ["P005"]
+    mercari_query: "FUJIFILM X100V"
+    ebay_query: "Fujifilm X100V"
+    shipping_cost_jpy: 4500
+  - id: "nikon-fm2"
+    name: "Nikon FM2"
+    category: "カメラ・交換レンズ"
+    plan_ids: []
+    mercari_query: "Nikon FM2 ボディ"
+    ebay_query: "Nikon FM2 film camera body"
+    shipping_cost_jpy: 4000
+  - id: "canon-ae1p"
+    name: "Canon AE-1 PROGRAM"
+    category: "カメラ・交換レンズ"
+    plan_ids: []
+    mercari_query: "Canon AE-1 PROGRAM"
+    ebay_query: "Canon AE-1 Program film camera"
+    shipping_cost_jpy: 4000
+  - id: "3ds-ll"
+    name: "ニンテンドー3DS LL"
+    category: "ゲーム・限定品"
+    plan_ids: ["P010"]
+    mercari_query: "ニンテンドー3DS LL 本体"
+    ebay_query: "Nintendo 3DS XL console Japan"
+    shipping_cost_jpy: 3000
   - id: "gba-sp"
     name: "ゲームボーイアドバンスSP（AGS-101）"
-    genre: "ゲーム機・レトロ"
+    category: "ゲーム・限定品"
+    plan_ids: ["P010"]
     mercari_query: "ゲームボーイアドバンスSP AGS-101"
     ebay_query: "Game Boy Advance SP AGS-101"
-    shipping_cost_jpy: 2000
-    extra_buy_cost_jpy: 150
-  - id: "gbl-astroboy-box-mint"
+    shipping_cost_jpy: 2500
+  - id: "gbl-astroboy"
     name: "ゲームボーイライト アストロボーイ"
-    genre: "ゲーム機・レトロ"
+    category: "ゲーム・限定品"
+    plan_ids: ["P012"]
     mercari_query: "ゲームボーイライト アストロボーイ"
     ebay_query: "Game Boy Light Astro Boy"
     shipping_cost_jpy: 2500
-    extra_buy_cost_jpy: 200
-  - id: "famicom"
-    name: "ファミコン本体"
-    genre: "ゲーム機・レトロ"
-    mercari_query: "ファミコン 本体 HVC-001"
-    ebay_query: "Famicom console HVC-001"
+  - id: "boss-pedal"
+    name: "BOSS エフェクター（日本製）"
+    category: "音響・楽器・電子機器"
+    plan_ids: ["P013"]
+    mercari_query: "BOSS エフェクター 日本製"
+    ebay_query: "BOSS pedal made in Japan"
     shipping_cost_jpy: 3000
-    extra_buy_cost_jpy: 200
-  - id: "super-famicom"
-    name: "スーパーファミコン本体"
-    genre: "ゲーム機・レトロ"
-    mercari_query: "スーパーファミコン 本体 SHVC-001"
-    ebay_query: "Super Famicom console SHVC-001"
-    shipping_cost_jpy: 3500
-    extra_buy_cost_jpy: 200
-  - id: "n64"
-    name: "NINTENDO64本体"
-    genre: "ゲーム機・レトロ"
-    mercari_query: "NINTENDO64 本体 NUS-001"
-    ebay_query: "Nintendo 64 console NUS-001 Japan"
-    shipping_cost_jpy: 3500
-    extra_buy_cost_jpy: 200
-  - id: "ds-lite"
-    name: "ニンテンドーDS Lite"
-    genre: "ゲーム機・携帯"
-    mercari_query: "ニンテンドーDS Lite 本体 USG-001"
-    ebay_query: "Nintendo DS Lite console USG-001"
-    shipping_cost_jpy: 2000
-    extra_buy_cost_jpy: 150
-  - id: "psp-3000"
-    name: "PSP-3000"
-    genre: "ゲーム機・携帯"
-    mercari_query: "PSP-3000 本体"
-    ebay_query: "Sony PSP-3000 console"
-    shipping_cost_jpy: 2000
-    extra_buy_cost_jpy: 150
-  - id: "nikon-fm2"
-    name: "Nikon FM2"
-    genre: "カメラ・フィルム"
-    mercari_query: "Nikon FM2 ボディ"
-    ebay_query: "Nikon FM2 film camera body"
+  - id: "maxon-od808"
+    name: "Maxon OD808"
+    category: "音響・楽器・電子機器"
+    plan_ids: ["P013"]
+    mercari_query: "Maxon OD808"
+    ebay_query: "Maxon OD808 overdrive"
     shipping_cost_jpy: 3000
-    extra_buy_cost_jpy: 300
-  - id: "canon-ae1p"
-    name: "Canon AE-1 PROGRAM"
-    genre: "カメラ・フィルム"
-    mercari_query: "Canon AE-1 PROGRAM"
-    ebay_query: "Canon AE-1 Program film camera"
-    shipping_cost_jpy: 3000
-    extra_buy_cost_jpy: 300
-  - id: "olympus-om1"
-    name: "OLYMPUS OM-1"
-    genre: "カメラ・フィルム"
-    mercari_query: "オリンパス OM-1 ボディ"
-    ebay_query: "Olympus OM-1 film camera body"
-    shipping_cost_jpy: 3000
-    extra_buy_cost_jpy: 300
   - id: "walkman-cassette"
     name: "カセットウォークマン"
-    genre: "オーディオ"
+    category: "音響・楽器・電子機器"
+    plan_ids: ["P014"]
     mercari_query: "ウォークマン カセット WM"
     ebay_query: "Sony Walkman cassette player WM"
+    shipping_cost_jpy: 3000
+  - id: "seiko-6139"
+    name: "SEIKO 6139 クロノグラフ"
+    category: "その他型番商品"
+    plan_ids: ["P019"]
+    mercari_query: "セイコー 6139"
+    ebay_query: "Seiko 6139 chronograph"
     shipping_cost_jpy: 2500
-    extra_buy_cost_jpy: 200
   - id: "gshock-frogman"
     name: "G-SHOCK フロッグマン"
-    genre: "腕時計"
+    category: "その他型番商品"
+    plan_ids: []
     mercari_query: "G-SHOCK フロッグマン GWF"
     ebay_query: "Casio G-Shock Frogman GWF"
     shipping_cost_jpy: 2500
-    extra_buy_cost_jpy: 200
   # 例: ジャンル別の上書き
   #   include_keywords: ["動作確認"]   # どれかを含む出品だけ対象
-  #   exclude_keywords: ["欠品"]       # このジャンルだけの除外語
-  #   min_profit_jpy: 3000
-  #   min_roi: 0.25
+  #   exclude_keywords: ["カビ", "曇り"]
+  #   min_profit_jpy: 20000             # 計画シートの下限より優先
+  #   us_duty_rate: 0.0                 # 品目の関税率が違う場合
 
 fx:
-  # 為替（JPY→USD）
-  jpy_per_usd: 150.0
+  # 為替（JPY→USD）。auto: true なら起動・スキャンのたびに自動取得（失敗時はこの値）
+  jpy_per_usd: 157.0
+  auto: true
+
+# 事業計画マスター（数値の正本）。計画値・カテゴリ基準・リスク閾値・ステージゲート・タスクをここから読む
+# sheet_id は公開リポジトリに載せないよう config.local.yaml に書く（plan: sheet_id: "..."）
+plan:
+  sheet_id: null
+  start_month: "2026-09"   # 計画の1か月目
+  refresh_hours: 6
+
+# 1件あたりの費用（計画シート「ユニットエコノミクス」と同じ構成）
+costs:
+  packing_material_jpy: 500   # 梱包資材
+  labor_jpy: 1500             # 検品・撮影・出品・発送の作業費
+  reserve_rate: 0.016         # 返品・値下げ・為替の引当（売価比）
+  # 米国向けはDDP必須（eBay・2025-10-17〜）。関税はセラー負担。
+  # 関税率は2026-07-24の通商法122条期限後の扱いが未確定のため仮置き → 外部環境ページで要確認
+  us_buyer_share: 0.5
+  us_duty_rate: 0.10
 
 fees:
   mercari:
@@ -151,13 +193,17 @@ fees:
     # eBay Final Value Fee（カテゴリ平均。ジャンル別に final_value_fee_rate で上書き可）
     final_value_fee_rate: 0.1325
     payment_fixed_fee_usd: 0.30
+    # 日本登録セラーの海外手数料（eBay日本語FAQ）
+    international_fee_rate: 0.0135
+    # Promoted Listings 等（売価比）
+    ad_rate: 0.02
     # Payoneer / Wise の USD→JPY 換金スプレッド
     payout_fx_spread_rate: 0.02
 
 # 候補に載せる基準
 thresholds:
-  min_profit_jpy: 2000
-  min_roi: 0.20          # 利益 ÷ 総原価
+  min_profit_jpy: 8000   # 貢献利益の下限（カテゴリ別の下限が計画シートにあればそちらを優先）
+  min_roi: 0.30          # 仕入ROI = 貢献利益 ÷ 仕入価格
   match_threshold: 0.55  # Mercari品 ↔ eBay成約品の一致スコア（0〜1）
   min_comps: 2           # 相場算出に必要なマッチ件数
 

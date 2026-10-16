@@ -15,6 +15,8 @@ from playwright.async_api import Error as PlaywrightError
 from . import db
 from .config import Config, Target
 from .http import close_session, open_page
+from . import fx as fx_mod
+from . import plan as plan_mod
 from .matching import find_comps, market_price
 from .profit import ProfitEstimate, estimate_profit
 from .sources import sample_items, sample_targets
@@ -184,6 +186,8 @@ async def crawl_target_once(cfg: Config, target: Target, session=None, *, fetch_
 class Candidate:
     est: ProfitEstimate
     genre: str
+    category: Optional[str]
+    min_profit_jpy: int
     item_key: str
     market_usd: float
     match_score: float
@@ -205,6 +209,8 @@ class Candidate:
         d = asdict(self.est)
         d.update(
             genre=self.genre,
+            category=self.category,
+            min_profit_jpy=self.min_profit_jpy,
             item_key=self.item_key,
             market_usd=round(self.market_usd, 2),
             match_score=self.match_score,
@@ -236,12 +242,13 @@ class RankStats:
 SORT_KEYS = {
     "roi": lambda c: (c.est.roi, c.est.profit_jpy),
     "profit": lambda c: (c.est.profit_jpy, c.est.roi),
-    # 総合: 利益額 × ROI × マッチ信頼度
-    "score": lambda c: (max(c.est.profit_jpy, 0) * max(c.est.roi, 0) * c.match_score, c.est.profit_jpy),
+    # 総合: 貢献利益額 × マッチ信頼度 × 需要（成約件数。5件以上で満点）
+    #   意思決定ログ 2026-07-21「ROIだけでなく利益額・売却確率・在庫日数を重視」
+    "score": lambda c: (max(c.est.profit_jpy, 0) * c.match_score * min(1.0, c.comps_count / 5), c.est.profit_jpy),
 }
 
 
-def sort_candidates(cands: list[Candidate], sort_by: str = "roi") -> list[Candidate]:
+def sort_candidates(cands: list[Candidate], sort_by: str = "score") -> list[Candidate]:
     key = SORT_KEYS.get(sort_by, SORT_KEYS["roi"])
     # 基準を満たす候補 → 惜しい候補 の順。その中で新着は常に上位へ
     return sorted(cands, key=lambda c: (not c.near_miss, c.is_new, *key(c)), reverse=True)
@@ -263,9 +270,12 @@ def rank_target(
     mercari_items: list[MercariListing],
     ebay_items: list[EbaySold],
     con,
+    plan: Optional[dict[str, Any]] = None,
 ) -> tuple[list[Candidate], RankStats]:
     th = cfg.thresholds
-    min_profit = target.min_profit_jpy if target.min_profit_jpy is not None else th.min_profit_jpy
+    # 下限: ジャンル個別 → 計画シートのカテゴリ別「貢献利益下限」 → 全体設定
+    cat_min = plan_mod.category_min_profit(plan or {}, target.category)
+    min_profit = target.min_profit_jpy if target.min_profit_jpy is not None else cat_min if cat_min is not None else th.min_profit_jpy
     min_roi = target.min_roi if target.min_roi is not None else th.min_roi
     # 初回スキャン時点で既にあった出品は「新着」ではない
     baseline = db.baseline_seen_at(con, target.id)
@@ -313,6 +323,8 @@ def rank_target(
             Candidate(
                 est=est,
                 genre=target.genre_label,
+                category=target.category,
+                min_profit_jpy=min_profit,
                 item_key=item_key,
                 market_usd=market,
                 match_score=comps[0].score,
@@ -340,11 +352,13 @@ async def scan_all(
     cfg: Config,
     *,
     data_source: Optional[str] = None,
-    sort_by: str = "roi",
+    sort_by: str = "score",
     console: Optional[Console] = None,
 ) -> dict[str, Any]:
     """全ジャンルを1周して候補を作り、DBに保存して要約を返す。"""
     source = (data_source or cfg.app.data_source).lower()
+    fx_mod.apply(cfg)
+    plan = plan_mod.load(cfg)
     con = db.connect(cfg.app.db_path)
     db.migrate(con)
     started = db.utc_now_iso()
@@ -396,7 +410,7 @@ async def scan_all(
     for t, m_items, e_items in collected:
         mercari_count += len(m_items)
         ebay_count += len(e_items)
-        cands, st = rank_target(cfg=cfg, target=t, mercari_items=m_items, ebay_items=e_items, con=con)
+        cands, st = rank_target(cfg=cfg, target=t, mercari_items=m_items, ebay_items=e_items, con=con, plan=plan)
         all_cands.extend(cands)
         for k in asdict(st):
             setattr(total, k, getattr(total, k) + getattr(st, k))

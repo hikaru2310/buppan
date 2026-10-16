@@ -109,7 +109,61 @@ def migrate(con: sqlite3.Connection) -> None:
           payload_json TEXT NOT NULL
         );
 
-        -- 仕入れ済み（取引履歴）
+        -- SKU（仕入れた商品1点ごと）: 購入→到着→検品→出品→販売→発送→着金 を追跡
+        CREATE TABLE IF NOT EXISTS skus (
+          sku TEXT PRIMARY KEY,
+          item_key TEXT,
+          status TEXT NOT NULL,          -- ordered/arrived/ready/listed/sold/shipped/paid/rejected/returned
+          title TEXT NOT NULL,
+          genre TEXT,
+          category TEXT,
+          mercari_url TEXT,
+          image_url TEXT,
+          payload_json TEXT,             -- 仕入れ時点の候補データ（予測値の根拠）
+          purchased_at TEXT NOT NULL,
+          buy_price_jpy INTEGER NOT NULL,
+          predicted_sell_usd REAL,
+          predicted_profit_jpy INTEGER,
+          breakeven_jpy INTEGER,
+          arrived_at TEXT,
+          inspected_at TEXT,
+          inspection TEXT,               -- pass/fail
+          defect_reason TEXT,
+          weight_g INTEGER,
+          listed_at TEXT,
+          list_price_usd REAL,
+          ebay_url TEXT,
+          sold_at TEXT,
+          sold_price_usd REAL,
+          buyer_country TEXT,
+          shipped_at TEXT,
+          carrier TEXT,
+          tracking TEXT,
+          shipping_cost_jpy INTEGER,
+          duty_jpy INTEGER,
+          paid_at TEXT,
+          payout_jpy INTEGER,            -- 換金後に口座へ入った円（eBay手数料・広告・換金差引後）
+          returned_at TEXT,
+          return_reason TEXT,
+          notes TEXT,
+          updated_at TEXT
+        );
+
+        -- 操作ログ（仕入れファネルの実績集計に使う）
+        CREATE TABLE IF NOT EXISTS events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ts TEXT NOT NULL,
+          kind TEXT NOT NULL,            -- queue/dismiss/purchase/arrive/inspect/list/sell/ship/pay/return
+          ref TEXT
+        );
+
+        -- 画面から入力する設定値（現金残高など）
+        CREATE TABLE IF NOT EXISTS settings (
+          key TEXT PRIMARY KEY,
+          value TEXT
+        );
+
+        -- 仕入れ済み（旧：取引履歴。現在は skus を使用）
         CREATE TABLE IF NOT EXISTS purchases (
           item_key TEXT PRIMARY KEY,
           purchased_at TEXT NOT NULL,
@@ -176,3 +230,7 @@ def baseline_seen_at(con: sqlite3.Connection, target_id: str) -> Optional[str]:
     """このジャンルを初めてスキャンした時刻（それ以前からある出品は NEW 扱いしない）。"""
     row = con.execute("SELECT MIN(first_seen) AS t FROM seen_items WHERE target_id=?", (target_id,)).fetchone()
     return row["t"] if row and row["t"] else None
+
+
+def log_event(con: sqlite3.Connection, kind: str, ref: str) -> None:
+    con.execute("INSERT INTO events(ts, kind, ref) VALUES(?, ?, ?)", (utc_now_iso(), kind, ref))

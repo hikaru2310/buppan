@@ -22,7 +22,7 @@ def _add_scan_args(p: argparse.ArgumentParser) -> None:
         help="live=実サイト / sample=同梱サンプル / auto=実サイト0件ならサンプル（既定: config の app.data_source）",
     )
     p.add_argument("--sample", action="store_true", help="--source sample の省略形")
-    p.add_argument("--sort", choices=["roi", "profit", "score"], default="roi", help="並び順（新着は常に上位）")
+    p.add_argument("--sort", choices=["roi", "profit", "score"], default="score", help="並び順（新着は常に上位）")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -49,7 +49,7 @@ def _source(args) -> Optional[str]:
     return "sample" if getattr(args, "sample", False) else args.source
 
 
-async def run_once(cfg_path: str, *, source: Optional[str] = None, sort_by: str = "roi") -> int:
+async def run_once(cfg_path: str, *, source: Optional[str] = None, sort_by: str = "score") -> int:
     cfg = load_config(cfg_path)
     console = Console()
 
