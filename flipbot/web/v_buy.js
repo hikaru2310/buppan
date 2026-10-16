@@ -30,7 +30,8 @@ function chips(){
     <span class="chip">走査 Mercari <b>${s.mercari_count}</b> / eBay <b>${s.ebay_count}</b></span>
     <span class="chip">為替 <b>¥${s.jpy_per_usd}</b>/USD</span>
     <span class="chip">下限 <b>計画シートのカテゴリ別貢献利益</b>・仕入ROI <b>${pct(s.min_roi)}</b></span>
-    <span class="chip">最終スキャン <b>${dtfmt(s.finished_at)}</b></span></div>`;
+    <span class="chip">最終スキャン <b>${dtfmt(s.finished_at)}</b></span>
+    ${S.next_scan_at?`<span class="chip">次の自動スキャン <b>${dtfmt(new Date(S.next_scan_at*1000).toISOString())}</b></span>`:""}</div>`;
 }
 function candRows(list,{compact=false}={}){
   if(!list.length) return `<div class="empty">${S.summary.finished_at?"条件を満たす候補はありません（「惜しい候補も表示」で基準未満も見られます）":"まだスキャン結果がありません。「再スキャン」を押してください"}</div>`;

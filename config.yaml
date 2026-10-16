@@ -13,7 +13,9 @@ app:
   # Use your existing Google Chrome profile (logged-in).
   user_data_dir: null
   chrome_profile_directory: null
-  poll_interval_seconds: 900  # 15 minutes
+  poll_interval_seconds: 900  # 15 minutes（CLIの loop 用）
+  # 画面版の自動スキャン間隔（分）。0で止める。Macを閉じても動かすには pmset の設定も必要（README参照）
+  auto_scan_minutes: 15
   # live: 実サイト収集 / sample: 同梱サンプル / auto: 実サイトが0件ならサンプルで代替
   data_source: auto
   web_host: "127.0.0.1"

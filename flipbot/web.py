@@ -55,6 +55,7 @@ class AppState:
         self.busy: Optional[str] = None  # "scan" | "login" | None
         self.last_error: Optional[str] = None
         self.login_result: Optional[str] = None
+        self.next_scan_at: Optional[float] = None  # 次の自動スキャン（UNIX秒）
 
     @property
     def cfg(self) -> Config:
@@ -152,6 +153,7 @@ class AppState:
             "env": env,
             "costs": cfg.costs.model_dump(),
             "scanning": self.busy == "scan",
+            "next_scan_at": self.next_scan_at,
             "logging_in": self.busy == "login",
             "login_result": self.login_result,
             "last_error": self.last_error,
@@ -415,6 +417,19 @@ def _make_handler(state: AppState):
     return Handler
 
 
+def _auto_scan_loop(state: "AppState", interval: int) -> None:
+    """一定間隔で自動スキャン。スキャン中・eBayログイン中なら次の回に回す。"""
+    import time
+
+    state.next_scan_at = time.time() + interval
+    while True:
+        time.sleep(max(state.next_scan_at - time.time(), 5))
+        if not state.start_scan():
+            state.next_scan_at = time.time() + 60  # 使用中なら1分後に再挑戦
+            continue
+        state.next_scan_at = time.time() + interval
+
+
 def serve(cfg_path: str, *, source: Optional[str] = None, port: Optional[int] = None, initial_scan: bool = True) -> int:
     console = Console()
     state = AppState(cfg_path, source)
@@ -422,8 +437,13 @@ def serve(cfg_path: str, *, source: Optional[str] = None, port: Optional[int] = 
     host, port = cfg.app.web_host, port or cfg.app.web_port
     if initial_scan:
         state.start_scan()
+    interval = int(cfg.app.auto_scan_minutes) * 60
+    if interval > 0:
+        threading.Thread(target=_auto_scan_loop, args=(state, interval), daemon=True).start()
     httpd = ThreadingHTTPServer((host, port), _make_handler(state))
     console.print(f"[bold green]Web画面: http://{host}:{port}/[/bold green]  （Ctrl+C で終了）")
+    if interval > 0:
+        console.print(f"自動スキャン: {interval // 60}分おき（config.yaml の app.auto_scan_minutes で変更。0で停止）")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

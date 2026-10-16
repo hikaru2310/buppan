@@ -128,6 +128,8 @@ class AppConfig(BaseModel):
     # 旧設定（互換用）。thresholds.min_comps が優先。
     ebay_min_median_samples: int = 3
     poll_interval_seconds: int = 900
+    # 画面版（serve）の自動スキャン間隔（分）。0で自動スキャンしない
+    auto_scan_minutes: int = 15
     # live: 実サイト収集 / sample: 同梱サンプル / auto: 実サイトが0件ならサンプルで代替
     data_source: str = "live"
     # Web画面

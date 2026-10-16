@@ -8,5 +8,6 @@ if [ ! -x .venv/bin/python ]; then
   python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt && .venv/bin/python -m playwright install chromium
 fi
 ( sleep 3; open "http://127.0.0.1:8000/" ) &
-echo "▶ 起動します。終了するときはこのウィンドウで Ctrl+C を押してください。"
-.venv/bin/python -m flipbot.run serve
+echo "▶ 起動します（15分おきに自動スキャン）。終了するときはこのウィンドウで Ctrl+C を押してください。"
+# caffeinate: ツールが動いている間はMacを自動スリープさせない（ふたを閉じた時は pmset の設定が必要）
+caffeinate -is .venv/bin/python -m flipbot.run serve

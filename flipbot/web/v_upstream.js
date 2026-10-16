@@ -9,6 +9,7 @@ function planBanner(){
     <span class="chip">正本 <a href="${esc(p.sheet_url||"#")}" target="_blank" rel="noopener">${esc(p.title||"事業計画シート")} ↗</a></span>
     <span class="chip">同期 <b>${esc(p._synced_at||"—")}</b> <a href="#" data-sync>今すぐ同期</a></span>
     <span class="chip">為替 <b>¥${num(S.fx?.rate)?S.fx.rate.toFixed(2):"—"}</b>/USD（${esc(S.fx?.source||"")}）</span>
+    <span class="chip">自動スキャン <b>${S.next_scan_at?"次回 "+dtfmt(new Date(S.next_scan_at*1000).toISOString()):"停止中"}</b></span>
     ${p.error?`<span class="chip sample">${esc(p.error)}</span>`:""}</div>`;
 }
 function monthProgress(){const d=new Date();const days=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();return d.getDate()/days}
