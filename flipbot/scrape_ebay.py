@@ -14,6 +14,8 @@ EBAY_SOLD_URL = (
     "?_nkw={q}"
     "&LH_Sold=1"
     "&LH_Complete=1"
+    "&_sop=13"  # 終了日の新しい順
+    "&_ipg=60"
     "&rt=nc"
 )
 
@@ -29,6 +31,10 @@ class EbaySold:
 
 # eBay price strings vary: "US $12.34", "$12.34", "US $1,234.56" etc.
 _USD_RE = re.compile(r"(?:US\s*)?\$\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?)")
+# 日本のIPから見ると「JPY 20,030」「¥20,030」表示になる（0001_sedori の検証）
+_JPY_RE = re.compile(r"(?:JPY|¥|￥)\s*([0-9][0-9,]*)|([0-9][0-9,]*)\s*円")
+# 価格を円→ドルに直すレート（parse_ebay_sold_html で設定）
+_jpy_per_usd: Optional[float] = None
 
 
 def build_ebay_sold_url(query: str) -> str:
@@ -36,8 +42,12 @@ def build_ebay_sold_url(query: str) -> str:
 
 
 def _parse_usd(text: str) -> Optional[float]:
-    m = _USD_RE.search(text.replace("\u00a0", " "))
+    text = text.replace("\u00a0", " ")
+    m = _USD_RE.search(text)
     if not m:
+        j = _JPY_RE.search(text)
+        if j and _jpy_per_usd:
+            return round(float((j.group(1) or j.group(2)).replace(",", "")) / _jpy_per_usd, 2)
         return None
     try:
         return float(m.group(1).replace(",", ""))
@@ -105,7 +115,9 @@ def _parse_ebay_li(li) -> Optional[EbaySold]:
     )
 
 
-def parse_ebay_sold_html(html: str) -> list[EbaySold]:
+def parse_ebay_sold_html(html: str, jpy_per_usd: Optional[float] = None) -> list[EbaySold]:
+    global _jpy_per_usd
+    _jpy_per_usd = jpy_per_usd
     soup = BeautifulSoup(html, "lxml")
     items: list[EbaySold] = []
 

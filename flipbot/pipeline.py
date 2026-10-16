@@ -108,27 +108,97 @@ async def open_session(cfg: Config):
     )
 
 
-async def crawl_target_once(cfg: Config, target: Target, session=None, *, fetch_ebay: bool = True) -> dict[str, Any]:
-    """1ジャンル分を収集。session を渡せばブラウザを使い回す（渡さなければ自分で開閉）。"""
+CONDITION_LABELS = {1: "新品・未使用", 2: "未使用に近い", 3: "目立った傷なし", 4: "やや傷あり", 5: "傷あり", 6: "状態が悪い"}
+
+
+class LazySession:
+    """ブラウザは必要になったときだけ開く（メルカリをAPIで取り、eBayがキャッシュならブラウザ不要）。"""
+
+    def __init__(self, cfg: Config, session=None) -> None:
+        self.cfg, self.session = cfg, session
+        self.error: Optional[Exception] = None
+
+    async def get(self):
+        if self.error is not None:  # 一度起動に失敗したら同じスキャン中は再挑戦しない
+            raise RuntimeError(str(self.error))
+        if self.session is None:
+            try:
+                self.session = await open_session(self.cfg)
+            except (RuntimeError, PlaywrightError) as e:
+                self.error = e
+                raise
+        return self.session
+
+    async def close(self) -> None:
+        if self.session is not None:
+            await close_session(self.session)
+            self.session = None
+
+
+def excludes_for(cfg: Config, target: Target) -> list[str]:
+    """除外語の3階層（全体 ＋ カテゴリ ＋ ジャンル）。0001_sedori の設計を踏襲。"""
+    return [*cfg.exclude_keywords, *cfg.category_excludes.get(target.category or "", []), *target.exclude_keywords]
+
+
+def master_targets(con) -> list[Target]:
+    """マスター（継続仕入れ）登録品をジャンルとして返す。"""
+    out = []
+    for r in con.execute("SELECT * FROM watch_items WHERE active=1 ORDER BY id"):
+        out.append(Target(
+            id=f"m{r['id']}", name=f"★{r['label']}", genre=f"マスター：{r['label']}", category=r["category"],
+            mercari_query=r["mercari_query"], ebay_query=r["ebay_query"], max_buy_jpy=r["max_buy_jpy"] or None,
+            shipping_cost_jpy=r["shipping_jpy"] or 0, min_profit_jpy=r["min_profit_jpy"],
+            exclude_keywords=[w for w in (r["exclude"] or "").split() if w], is_master=True,
+        ))
+    return out
+
+
+def max_buy_for(cfg: Config, target: Target) -> Optional[int]:
+    v = target.max_buy_jpy if target.max_buy_jpy is not None else cfg.thresholds.max_buy_jpy
+    return int(v) if v else None
+
+
+async def _mercari_items(cfg: Config, target: Target, lazy: "LazySession") -> tuple[list[MercariListing], Optional[str], str]:
+    """メルカリの出品を取る。api 指定でも失敗したらブラウザに切り替える。"""
+    note = None
+    if cfg.app.mercari_source == "api":
+        from . import mercari_api
+
+        lo, hi = (cfg.app.mercari_api_interval + [3.0, 7.0])[:2]
+        try:
+            items = await asyncio.to_thread(
+                mercari_api.search, target.mercari_query, max_price_jpy=max_buy_for(cfg, target),
+                exclude_keyword=" ".join(excludes_for(cfg, target)) or None, condition_ids=target.conditions,
+                min_interval_sec=lo, max_interval_sec=hi,
+            )
+            return items, None, "api"
+        except Exception as e:  # noqa: BLE001 - ブラウザ取得にフォールバック
+            note = f"メルカリAPIで取得できなかったため、ブラウザで取得しました（{type(e).__name__}）"
+    session = await lazy.get()
+    url = build_mercari_search_url(target.mercari_query)
+    html = await fetch_html(session.page, url, scroll_steps=cfg.app.mercari_scroll_steps)
+    items = parse_mercari_search_html(html)
+    block = detect_block("mercari", html, session.page.url)
+    if not items:
+        _save_debug(f"mercari_{target.id}", html)
+        block = block or "Mercariの商品一覧を解析できませんでした（0件。検索語を見直すか、ページ構造が変わった可能性）"
+    return items, block or note, "browser"
+
+
+async def crawl_target_once(cfg: Config, target: Target, session=None, *, fetch_ebay: bool = True, lazy: Optional["LazySession"] = None) -> dict[str, Any]:
+    """1ジャンル分を収集。lazy/session を渡せばブラウザを使い回す（渡さなければ自分で開閉）。"""
     con = db.connect(cfg.app.db_path)
     db.migrate(con)
     db.upsert_target(con, target.id, target.name)
-    own_session = session is None
-    if own_session:
-        session = await open_session(cfg)
+    own = lazy is None
+    lazy = lazy or LazySession(cfg, session)
     try:
         # Mercari（販売中・新着順）
         mercari_url = build_mercari_search_url(target.mercari_query)
-        mercari_html = await fetch_html(session.page, mercari_url, scroll_steps=cfg.app.mercari_scroll_steps)
-        mercari_items = parse_mercari_search_html(mercari_html)
-        mercari_block = detect_block("mercari", mercari_html, session.page.url)
-        if len(mercari_items) == 0 and not mercari_block:
-            mercari_block = "Mercariの商品一覧を解析できませんでした（0件。検索語を見直すか、ページ構造が変わった可能性）"
-        if len(mercari_items) == 0:
-            _save_debug(f"mercari_{target.id}", mercari_html)
+        mercari_items, mercari_block, mercari_via = await _mercari_items(cfg, target, lazy)
         mercari_snap = db.create_snapshot(
             con, target_id=target.id, source="mercari",
-            meta_json=json.dumps({"url": mercari_url}, ensure_ascii=False),
+            meta_json=json.dumps({"url": mercari_url, "via": mercari_via}, ensure_ascii=False),
         )
         con.executemany(
             "INSERT INTO mercari_listings(snapshot_id, title, price_jpy, shipping_included, status, url, item_id) "
@@ -151,8 +221,9 @@ async def crawl_target_once(cfg: Config, target: Target, session=None, *, fetch_
             ebay_cached_at, ebay_items = None, []
         else:
             ebay_cached_at = None
+            session = await lazy.get()
             ebay_html = await fetch_html(session.page, ebay_url)
-            ebay_items = parse_ebay_sold_html(ebay_html)
+            ebay_items = parse_ebay_sold_html(ebay_html, cfg.fx.jpy_per_usd)
             ebay_block = detect_block("ebay", ebay_html, session.page.url)
             if len(ebay_items) == 0 and not ebay_block:
                 ebay_block = "eBayの成約一覧を解析できませんでした（0件。検索語を見直してください）"
@@ -177,8 +248,8 @@ async def crawl_target_once(cfg: Config, target: Target, session=None, *, fetch_
             "ebay_items": ebay_items,
         }
     finally:
-        if own_session:
-            await close_session(session)
+        if own:
+            await lazy.close()
         con.close()
 
 
@@ -204,6 +275,11 @@ class Candidate:
     mercari_similar_url: str = ""
     # 基準（下限利益・ROI）未達だが利益は出る「惜しい候補」
     near_miss: bool = False
+    condition: Optional[str] = None  # メルカリの商品状態（API取得時）
+    is_shop: bool = False
+    listed_at: Optional[str] = None
+    demand_count: int = 0  # eBayで同じ検索語で売れた件数（需要）
+    is_master: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self.est)
@@ -225,6 +301,11 @@ class Candidate:
             ebay_research_url=self.ebay_research_url,
             mercari_similar_url=self.mercari_similar_url,
             near_miss=self.near_miss,
+            condition=self.condition,
+            is_shop=self.is_shop,
+            listed_at=self.listed_at,
+            demand_count=self.demand_count,
+            is_master=self.is_master,
         )
         return d
 
@@ -237,6 +318,9 @@ class RankStats:
     below_threshold: int = 0
     passed: int = 0
     near_miss: int = 0
+    low_demand: int = 0  # eBayの成約件数が下限未満
+    over_budget: int = 0  # 仕入れ上限超え
+    accessory: int = 0  # 相場に対して安すぎる＝付属品・別物の疑い
 
 
 SORT_KEYS = {
@@ -256,7 +340,7 @@ def sort_candidates(cands: list[Candidate], sort_by: str = "score") -> list[Cand
 
 def _is_excluded(cfg: Config, target: Target, title: str) -> bool:
     t = title.lower()
-    if any(k.lower() in t for k in [*cfg.exclude_keywords, *target.exclude_keywords]):
+    if any(k.lower() in t for k in excludes_for(cfg, target)):
         return True
     if target.include_keywords and not any(k.lower() in t for k in target.include_keywords):
         return True
@@ -283,6 +367,9 @@ def rank_target(
 
     stats = RankStats()
     out: list[Candidate] = []
+    # 需要の下限（0001_sedori の min_sold_count）：eBayで売れていないジャンルは候補にしない
+    low_demand = len(ebay_items) < th.min_sold_count
+    cap = max_buy_for(cfg, target)
     for it in mercari_items:
         if it.status != "on_sale":
             continue
@@ -295,13 +382,23 @@ def rank_target(
             and datetime.fromisoformat(first_seen) >= new_cutoff
         )
 
-        if _is_excluded(cfg, target, it.title):
+        if _is_excluded(cfg, target, it.title) or (target.conditions and it.condition_id and it.condition_id not in target.conditions):
             stats.excluded += 1
+            continue
+        if cap and it.price_jpy > cap:
+            stats.over_budget += 1
+            continue
+        if low_demand:
+            stats.low_demand += 1
             continue
         comps = find_comps(it.title, ebay_items, title_of=lambda e: e.title, threshold=th.match_threshold)
         market = market_price([c.item.total_usd for c in comps], min_samples=th.min_comps)
         if market is None:
             stats.no_comp += 1
+            continue
+        # 付属品・別物よけ（0001_sedori の min_price_ratio）：相場の2割未満の出品は本体ではない可能性が高い
+        if th.min_price_ratio and it.price_jpy < market * cfg.fx.jpy_per_usd * th.min_price_ratio:
+            stats.accessory += 1
             continue
         est = estimate_profit(
             cfg=cfg,
@@ -342,6 +439,11 @@ def rank_target(
                 ebay_research_url=build_ebay_research_url(target.ebay_query),
                 mercari_similar_url=build_mercari_keyword_url(target.mercari_query),
                 near_miss=near_miss,
+                condition=CONDITION_LABELS.get(it.condition_id) if it.condition_id else None,
+                is_shop=it.is_shop,
+                listed_at=it.listed_at,
+                demand_count=len(ebay_items),
+                is_master=target.is_master,
             )
         )
     con.commit()
@@ -365,32 +467,28 @@ async def scan_all(
     notes: list[dict[str, Any]] = []
     collected: list[tuple[Target, list[MercariListing], list[EbaySold]]] = []
 
-    if source in ("live", "auto") and cfg.all_targets:
-        session = None
+    targets = [*cfg.all_targets, *master_targets(con)]
+    if source in ("live", "auto") and targets:
+        lazy = LazySession(cfg)
+        ebay_ok = True
         try:
-            session = await open_session(cfg)
-        except (RuntimeError, PlaywrightError) as e:
-            notes.append({"target": "ブラウザ", "level": "error", "message": str(e)})
-        if session is not None:
-            ebay_ok = True
-            try:
-                for t in cfg.all_targets:
-                    if console:
-                        console.rule(f"[bold]{t.name}[/bold]")
-                    try:
-                        res = await crawl_target_once(cfg, t, session=session, fetch_ebay=ebay_ok)
-                    except (RuntimeError, PlaywrightError) as e:
-                        notes.append({"target": t.name, "level": "error", "message": str(e)})
-                        continue
-                    for src in ("mercari", "ebay"):
-                        if res[src].get("block_reason"):
-                            notes.append({"target": t.name, "level": "warn", "message": f"{src}: {res[src]['block_reason']}"})
-                    eb = res["ebay"].get("block_reason") or ""
-                    if "ログイン" in eb or "拒否" in eb or "captcha" in eb:
-                        ebay_ok = False
-                    collected.append((t, res["mercari_items"], res["ebay_items"]))
-            finally:
-                await close_session(session)
+            for t in targets:
+                if console:
+                    console.rule(f"[bold]{t.name}[/bold]")
+                try:
+                    res = await crawl_target_once(cfg, t, fetch_ebay=ebay_ok, lazy=lazy)
+                except (RuntimeError, PlaywrightError) as e:
+                    notes.append({"target": t.name, "level": "error", "message": str(e)})
+                    continue
+                for src in ("mercari", "ebay"):
+                    if res[src].get("block_reason"):
+                        notes.append({"target": t.name, "level": "warn", "message": f"{src}: {res[src]['block_reason']}"})
+                eb = res["ebay"].get("block_reason") or ""
+                if "ログイン" in eb or "拒否" in eb or "captcha" in eb:
+                    ebay_ok = False
+                collected.append((t, res["mercari_items"], res["ebay_items"]))
+        finally:
+            await lazy.close()
 
     used = source
     live_ok = any(m and e for _, m, e in collected)
@@ -442,6 +540,12 @@ async def scan_all(
             for c in ranked
         ],
     )
+    con.commit()
+    # 通知（基準を満たした新着・マスターのヒット）
+    from .notify import notify_scan
+
+    summary["notify"] = notify_scan(cfg, con, [c.to_dict() for c in ranked], data_source=used)
+    con.execute("UPDATE scans SET summary_json=? WHERE id=?", (json.dumps(summary, ensure_ascii=False), scan_id))
     con.commit()
     con.close()
     summary["scan_id"] = scan_id

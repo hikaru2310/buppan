@@ -24,6 +24,10 @@ class MercariListing:
     image_url: Optional[str] = None
     # 「現在 ¥」表記＝オークション形式（価格が上がる可能性あり）
     is_auction: bool = False
+    # 以下はAPI取得時のみ（ブラウザ取得では None）
+    condition_id: Optional[int] = None  # 1=新品 … 6=状態が悪い
+    listed_at: Optional[str] = None  # 出品日時（UTC）
+    is_shop: bool = False  # メルカリShops（事業者）の出品
 
 
 _PRICE_RE = re.compile(r"([0-9][0-9,]*)\s*円")

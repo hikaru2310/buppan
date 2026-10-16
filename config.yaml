@@ -22,6 +22,9 @@ app:
   web_port: 8000
   # 何時間以内に新しく現れた出品を NEW とするか
   new_window_hours: 24
+  # メルカリの取得方法: browser（公開の検索ページ）/ api（内部検索API。1秒で120件・状態も取れるが非公式＝規約リスク）
+  mercari_source: browser
+  mercari_api_interval: [3, 7]   # api 時のアクセス間隔（秒・ランダム）
   # メルカリ一覧のスクロール回数（多いほど1ジャンルあたりの件数↑）
   mercari_scroll_steps: 18
   # eBay成約データを何時間再利用するか（eBayへのアクセスを減らす）
@@ -95,6 +98,21 @@ genres:
     plan_ids: []
     mercari_query: "Nikon FM2 ボディ"
     ebay_query: "Nikon FM2 film camera body"
+    shipping_cost_jpy: 4000
+  - id: "nikon-f3"
+    name: "Nikon F3"
+    category: "カメラ・交換レンズ"
+    plan_ids: []
+    mercari_query: "ニコン F3 ボディ"
+    ebay_query: "Nikon F3 film camera body"
+    shipping_cost_jpy: 4000
+    # 0001_sedori 2026-06 実データ: eBay Sold 中央値 $360・60件
+  - id: "olympus-om1"
+    name: "OLYMPUS OM-1"
+    category: "カメラ・交換レンズ"
+    plan_ids: []
+    mercari_query: "オリンパス OM-1 ボディ"
+    ebay_query: "Olympus OM-1 film camera body"
     shipping_cost_jpy: 4000
   - id: "canon-ae1p"
     name: "Canon AE-1 PROGRAM"
@@ -204,10 +222,26 @@ fees:
 
 # 候補に載せる基準
 thresholds:
+  max_buy_jpy: 150000    # 仕入れ価格の上限（資金に応じて。0で無制限）
+  min_sold_count: 3      # 需要の下限: eBayでその検索語が直近に売れた件数（0001_sedori）
+  min_price_ratio: 0.20  # 付属品・別物よけ: 相場(円)の2割未満の出品は本体ではないとみなす
   min_profit_jpy: 8000   # 貢献利益の下限（カテゴリ別の下限が計画シートにあればそちらを優先）
   min_roi: 0.30          # 仕入ROI = 貢献利益 ÷ 仕入価格
   match_threshold: 0.55  # Mercari品 ↔ eBay成約品の一致スコア（0〜1）
   min_comps: 2           # 相場算出に必要なマッチ件数
 
-# 全ジャンル共通の除外語
-exclude_keywords: ["ジャンク", "部品取り", "動作未確認", "難あり", "空箱", "箱のみ"]
+# 除外語は3階層でマージ: 全体（exclude_keywords）＋ カテゴリ（category_excludes）＋ ジャンル（genres[].exclude_keywords）
+# 全ジャンル共通（0001_sedori のリサーチで誤検知が多かった語を、良品を消さない範囲で採用）
+exclude_keywords: ["ジャンク", "部品取り", "動作未確認", "難あり", "空箱", "箱のみ", "互換機", "攻略本", "カタログ", "パンフレット", "ポスター", "ステッカー", "キーホルダー"]
+# カテゴリ別。「〜のみ」で付属品単体を除き、セット品（前後キャップ付き・箱説付き）は残す
+category_excludes:
+  "カメラ・交換レンズ": ["キャップのみ", "フードのみ", "ケースのみ", "ストラップのみ", "説明書のみ", "取扱説明書のみ", "データバック", "マウントアダプター", "レンズフィルターのみ"]
+  "ゲーム・限定品": ["ソフトのみ", "説明書のみ", "コントローラーのみ", "ケーブルのみ", "アダプターのみ", "クラシックミニ", "液晶のみ", "シェル", "交換用"]
+  "音響・楽器・電子機器": ["箱のみ", "取扱説明書のみ", "電源アダプターのみ", "ノブのみ"]
+  "その他型番商品": ["ベルトのみ", "バンドのみ", "コマのみ", "箱のみ"]
+
+# 通知（Slack）。webhook URL は config.local.yaml に書く:  notify: {slack_webhook_url: "https://hooks.slack.com/services/..."}
+notify:
+  on_new_candidates: true   # 基準を満たした新着
+  on_master_hits: true      # マスター（継続仕入れ）のヒット
+  max_per_scan: 10

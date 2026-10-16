@@ -81,6 +81,12 @@ class Target(BaseModel):
     plan_ids: list[str] = Field(default_factory=list)
     # 米国の関税率の上書き（品目で異なる場合）
     us_duty_rate: Optional[float] = None
+    # 仕入れ価格の上限（資金規模・マスター登録時の指値）。未指定なら thresholds.max_buy_jpy
+    max_buy_jpy: Optional[int] = None
+    # 対象にするメルカリの商品状態（1=新品 2=未使用に近い 3=目立った傷なし 4=やや傷 5=傷あり 6=状態悪い）。空なら全部
+    conditions: list[int] = Field(default_factory=list)
+    # マスター（継続仕入れ）から作られたジャンルか
+    is_master: bool = False
     extra_buy_cost_jpy: int = 0  # 梱包・雑費（Costs に加えてジャンル固有に足す分）
     shipping_cost_jpy: int = 0  # 国際送料
     # ジャンル別の eBay FVF 上書き
@@ -100,6 +106,12 @@ class Thresholds(BaseModel):
     match_threshold: float = 0.55
     # 相場算出に必要なマッチ件数
     min_comps: int = 2
+    # 需要の下限: eBayの検索語で売れた件数（直近90日・1ページ目）。これ未満のジャンルは候補を出さない
+    min_sold_count: int = 3
+    # 付属品・別物よけ: 仕入れ価格が「相場(円)×この比」未満なら別物とみなす（0で無効）
+    min_price_ratio: float = 0.20
+    # 仕入れ価格の上限（0で無制限）
+    max_buy_jpy: int = 0
 
 
 class AppConfig(BaseModel):
@@ -137,10 +149,27 @@ class AppConfig(BaseModel):
     web_port: int = 8000
     # 何時間以内に初めて見た出品を NEW とするか
     new_window_hours: int = 24
+    # メルカリの取得方法: browser（公開の検索ページ・既定）/ api（内部検索API。速いが非公式・規約リスク）
+    mercari_source: str = "browser"
+    # api 利用時のアクセス間隔（秒・ランダム）
+    mercari_api_interval: list[float] = Field(default_factory=lambda: [3.0, 7.0])
     # メルカリ一覧の遅延読み込み対策のスクロール回数（多いほど件数↑・時間↑）
     mercari_scroll_steps: int = 18
     # eBay成約データの再利用時間（0で毎回取得）。eBayへのアクセス回数を減らす
     ebay_cache_hours: float = 12
+
+
+class Notify(BaseModel):
+    """通知。webhook URL は config.local.yaml に書く（GitHubに上げない）。"""
+
+    slack_webhook_url: Optional[str] = None
+    # 通知の対象: 基準を満たした新着候補 / マスター（継続仕入れ）のヒット
+    on_new_candidates: bool = True
+    on_master_hits: bool = True
+    # 1回のスキャンで通知する最大件数
+    max_per_scan: int = 10
+    # 画面のURL（通知のリンク用）
+    app_url: str = "http://127.0.0.1:8000/"
 
 
 class Config(BaseModel):
@@ -153,6 +182,9 @@ class Config(BaseModel):
     costs: Costs = Field(default_factory=Costs)
     plan: PlanSource = Field(default_factory=PlanSource)
     thresholds: Thresholds = Field(default_factory=Thresholds)
+    notify: Notify = Field(default_factory=Notify)
+    # カテゴリ別の除外語（全体 ＋ カテゴリ ＋ ジャンル の3階層でマージ）
+    category_excludes: dict[str, list[str]] = Field(default_factory=dict)
     # 全ジャンル共通の除外語
     exclude_keywords: list[str] = Field(
         default_factory=lambda: ["ジャンク", "部品取り", "動作未確認", "難あり", "空箱", "箱のみ"]

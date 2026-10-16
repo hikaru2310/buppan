@@ -109,7 +109,7 @@ VIEWS.env=["上流 / 外部環境",()=>{
       <div class="pv"><span class="lv ${esc(it.level)}">${esc(it.level)}</span><span class="meta">確認 ${esc(it.checked||"")}${it.review_by?` ・ 次回確認 ${esc(it.review_by)}${it.review_by<=today?' <b class="overdue">（期限切れ）</b>':""}`:""}</span></div>
       <h3>${esc(it.title)}</h3>
       <div class="cols"><div><b>事実</b>${esc(it.fact)}</div><div><b>自社への影響</b>${esc(it.impact)}</div><div><b>ツールでの扱い</b>${esc(it.tool)}</div></div>
-      <div class="src">${(it.sources||[]).map(s=>`<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)} ↗</a>`).join("")}</div></div>`).join("")}</div>`).join("");
+      <div class="src">${(it.sources||[]).map(s=>s.url?`<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)} ↗</a>`:`<span class="meta">出典：${esc(s.title)}</span>`).join("")}</div></div>`).join("")}</div>`).join("");
 }];
 
 // ---------- 戦略・カテゴリ

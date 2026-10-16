@@ -89,13 +89,25 @@ VIEWS.settle=["実務4 着金・精算 / 着金・精算",()=>{
         <button class="btn dark sm" data-act="pay" data-sku="${esc(x.sku)}">着金した</button></div>
         <div class="form-inline" data-f style="margin-top:6px"><select name="return_reason">${opt(RETURNS)}</select><button class="btn sm" data-act="return" data-sku="${esc(x.sku)}">返品になった</button></div></td></tr>`)):emptyCard("着金待ちの商品はありません"))
   + h2("· 02","予測と実績（直近の着金済み）",`予測利益誤差（平均・絶対値）${pct(S.ops.indicators?.forecast_error,1)}`)
-  + (paid.length?opsTable(["商品","#売価","#入金額","#予測利益","#実現利益","#誤差"],paid.map(x=>{const e=num(x.realized_jpy)&&x.predicted_profit_jpy?(x.realized_jpy-x.predicted_profit_jpy)/Math.abs(x.predicted_profit_jpy):null;return `<tr>${skuCell(x)}
+  + (paid.length?opsTable(["商品","#売価","#入金額","#予測利益","#実現利益","#誤差",""],paid.map(x=>{const e=num(x.realized_jpy)&&x.predicted_profit_jpy?(x.realized_jpy-x.predicted_profit_jpy)/Math.abs(x.predicted_profit_jpy):null;return `<tr>${skuCell(x)}
       <td class="num">${usd(x.sold_price_usd)}</td><td class="num">${yen(x.payout_jpy)}</td><td class="num">${yen(x.predicted_profit_jpy)}</td>
-      <td class="num ${x.realized_jpy>=0?"pos":"neg"}"><b>${yen(x.realized_jpy)}</b></td><td class="num ${num(e)&&Math.abs(e)>.2?"neg":""}">${num(e)?(e>=0?"+":"")+pct(e,1):"—"}</td></tr>`})):emptyCard("着金済みの商品はまだありません"))
+      <td class="num ${x.realized_jpy>=0?"pos":"neg"}"><b>${yen(x.realized_jpy)}</b></td><td class="num ${num(e)&&Math.abs(e)>.2?"neg":""}">${num(e)?(e>=0?"+":"")+pct(e,1):"—"}</td>
+      <td class="num">${x.realized_jpy>0?`<button class="btn sm ghost" data-edit="m${esc(x.sku)}">マスター登録</button>`:""}</td></tr>`
+      +(editing==="m"+x.sku?`<tr class="detail"><td colspan="7">${masterForm(skuMasterDefaults(x))}</td></tr>`:"")})):emptyCard("着金済みの商品はまだありません"))
   + (errs.length>=3?`<div class="note">誤差が大きい商品は、送料（実費 vs 見込み）・関税・売価（相場 vs 実売）のどれがずれたかを確認し、config.yaml のジャンル送料や costs を更新してください。</div>`:"")
   + h2("· 03","返品",`${ret.length}件・返品率 ${pct(S.ops.indicators?.return_rate,1)}（計画上限4%・停止7%）`)
   + (ret.length?opsTable(["商品","理由","#仕入","返品日"],ret.map(x=>`<tr>${skuCell(x)}<td>${esc(x.return_reason)}</td><td class="num">${yen(x.buy_price_jpy)}</td><td>${dfmt(x.returned_at)}</td></tr>`)):emptyCard("返品はありません"));
 }];
+
+// 着金済みSKU → マスター：実送料と、実績から逆算した指値を初期値にする
+function skuMasterDefaults(x){
+  const g=(S.rules.config_genres||[]).find(g=>g.name===x.genre||g.genre===x.genre)||{};
+  const ship=x.shipping_cost_jpy||g.shipping_cost_jpy||"";
+  const minp=(catPlan(x.category)["貢献利益下限"])||8000;
+  // 実現利益が下限を上回った分だけ高く買っても下限は確保できる
+  const cap=Math.max(0,Math.round((x.buy_price_jpy+(x.realized_jpy||0)-minp)/100)*100);
+  return {label:x.title.slice(0,40),category:x.category,mercari_query:g.mercari_query||x.title.slice(0,30),ebay_query:g.ebay_query||"",max_buy_jpy:cap,shipping_jpy:ship,source_ref:x.sku};
+}
 
 // ---------- SKU台帳
 VIEWS.ledger=["実務4 着金・精算 / SKU台帳",()=>{
@@ -140,11 +152,23 @@ VIEWS.rules=["設定 / ルール・前提",()=>{
     ${row("仕入ROIの下限","貢献利益 ÷ 仕入価格",pct(th.min_roi))}
     ${row("照合しきい値","メルカリ品 ↔ eBay成約品の一致スコア",(th.match_threshold??0).toFixed(2))}
     ${row("相場に必要な成約件数","これ未満は「相場なし」",(th.min_comps??0)+" 件")}
-    ${row("除外キーワード","全ジャンル共通",esc((r.exclude_keywords||[]).join("・")))}
-    ${row("データソース","live / sample / auto",esc(r.data_source))}</div>`
+    ${row("仕入れ価格の上限","資金規模（ジャンル・マスターで個別に設定可）",th.max_buy_jpy?yen(th.max_buy_jpy):"なし")}
+    ${row("需要の下限","eBayで検索語が直近に売れた件数（0001_sedori）",(th.min_sold_count??0)+" 件")}
+    ${row("付属品・別物よけ","相場(円)に対する仕入れ価格の下限比",pct(th.min_price_ratio))}
+    ${row("データソース","live / sample / auto",esc(r.data_source))}
+    ${row("メルカリの取得方法","browser＝公開の検索ページ / api＝内部検索API（非公式・要判断）",esc(S.settings?.mercari_source||""))}
+    ${row("自動スキャン","画面版の起動中",S.settings?.auto_scan_minutes?S.settings.auto_scan_minutes+"分おき":"停止")}</div>
+  <h2><span class="no">§</span>除外語（3階層：全体 ＋ カテゴリ ＋ ジャンル）</h2><div class="card rules">
+    ${row("全体","全ジャンル共通",esc((r.exclude_keywords||[]).join("・")))}
+    ${Object.entries(S.settings?.category_excludes||{}).map(([k,v])=>row(esc(k),"カテゴリ別",esc(v.join("・")))).join("")}</div>
+  <h2><span class="no">§</span>通知</h2><div class="card rules">
+    ${row("Slack","config.local.yaml の notify.slack_webhook_url（GitHubに上げない）",S.settings?.notify_configured?"設定済み":"未設定")}
+    ${row("通知の対象","基準を満たした新着 / マスターのヒット（同じ出品は1回だけ）",`${S.settings?.notify?.on_new_candidates?"新着":""}${S.settings?.notify?.on_master_hits?"・マスター":""}`)}
+    <div class="r"><div>テスト送信<span>設定後に押して届くか確認</span></div><button class="btn sm" id="notifyTest">テスト通知を送る</button></div></div>`
   + h2("§","監視ジャンル（config.yaml）",`${(r.config_genres||r.genres||[]).length}件`)
   + `<div class="card"><div class="wide"><table><thead><tr><th>ジャンル</th><th>カテゴリ</th><th>仮説ID</th><th>メルカリ検索</th><th>eBay検索</th><th class="num">国際送料</th><th class="num">下限</th></tr></thead><tbody>
     ${(r.config_genres||r.genres||[]).map(g=>`<tr><td><b>${esc(g.name)}</b></td><td class="mini">${esc(g.category||"")}</td><td class="mini">${esc((g.plan_ids||[]).join(","))}</td><td class="mini">${esc(g.mercari_query)}</td><td class="mini">${esc(g.ebay_query)}</td>
       <td class="num">${yen(g.shipping_cost_jpy)}</td><td class="num">${g.min_profit_jpy!=null?yen(g.min_profit_jpy):yen((catPlan(g.category)["貢献利益下限"])??th.min_profit_jpy)}</td></tr>`).join("")}
   </tbody></table></div></div>`;
-},()=>{const b=$("#cashSave"); if(b) b.onclick=async()=>{await post("/api/settings",{cash_jpy:$("#cashIn").value});toast("保存しました");load()}}];
+},()=>{const b=$("#cashSave"); if(b) b.onclick=async()=>{await post("/api/settings",{cash_jpy:$("#cashIn").value});toast("保存しました");load()};
+  const t=$("#notifyTest"); if(t) t.onclick=async()=>{const r=await (await post("/api/notify-test",{})).json();toast(r.message)}}];

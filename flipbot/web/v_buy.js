@@ -25,7 +25,10 @@ async function bought(k,price){const r=await (await post("/api/purchased",{item_
 
 function chips(){
   const s=S.summary; if(!s.finished_at) return "";
+  const st=s.stats||{};
   return `<div class="chips">
+    <span class="chip">取得 <b>${S.settings?.mercari_source==="api"?"メルカリAPI":"メルカリ検索ページ"}</b></span>
+    <span class="chip">走査 <b>${st.scanned??0}</b> → 除外${st.excluded??0}・上限超${st.over_budget??0}・需要不足${st.low_demand??0}・相場なし${st.no_comp??0}・付属品疑い${st.accessory??0}・基準未満${st.below_threshold??0}</span>
     <span class="chip ${s.data_source==="sample"?"sample":""}">データ <b>${s.data_source==="sample"?"サンプル":"実サイト"}</b></span>
     <span class="chip">走査 Mercari <b>${s.mercari_count}</b> / eBay <b>${s.ebay_count}</b></span>
     <span class="chip">為替 <b>¥${s.jpy_per_usd}</b>/USD</span>
@@ -41,7 +44,7 @@ function candRows(list,{compact=false}={}){
     return `<tr>
       <td class="meta">${i+1}</td>
       <td class="item"><div class="itemrow">${c.image_url?`<img class="thumb" src="${esc(c.image_url)}" alt="" loading="lazy">`:""}<div>
-        <div>${c.is_new?'<span class="tag new">NEW</span>':""}${c.near_miss?'<span class="tag warn">基準未満</span>':""}${c.is_auction?'<span class="tag warn">オークション</span>':""}<span class="tag">${esc(c.category||c.genre)}</span></div>
+        <div>${c.is_master?'<span class="tag new">★マスター</span>':""}${c.is_new?'<span class="tag new">NEW</span>':""}${c.near_miss?'<span class="tag warn">基準未満</span>':""}${c.is_auction?'<span class="tag warn">オークション</span>':""}${c.condition?`<span class="tag">${esc(c.condition)}</span>`:""}${c.is_shop?'<span class="tag">ショップ</span>':""}<span class="tag">${esc(c.category||c.genre)}</span></div>
         <a class="title" href="${esc(c.mercari_url)}" target="_blank" rel="noopener">${esc(c.mercari_title)}</a>
         <div class="meta">${esc(c.genre)} ・ ${c.shipping_included?"送料込み":"送料別"} ・ 初回検知 ${dtfmt(c.first_seen)}</div>
         <div class="links"><a href="${esc(c.mercari_url)}" target="_blank" rel="noopener">${isSample()?"メルカリで検索（サンプル）":"メルカリ商品ページ"} ↗</a>
@@ -56,8 +59,10 @@ function candRows(list,{compact=false}={}){
       <td class="num"><a class="btn buy sm" href="${esc(c.mercari_url)}" target="_blank" rel="noopener">仕入れる</a>
         <button class="btn sm" data-q="${esc(k)}" ${inQueue(k)?"disabled":""}>${inQueue(k)?"キュー済":"キューへ"}</button>
         <button class="btn sm" data-o="${esc(k)}">${isOpen?"閉じる":"内訳"}</button>
+        <button class="btn sm ghost" data-master="${esc(k)}">マスター登録</button>
         <span class="menuwrap"><button class="btn sm ghost" data-m="${esc(k)}">仕入れない</button>${menuFor===k?`<div class="menu">${REASONS.map(r=>`<button data-dk="${esc(k)}" data-r="${esc(r)}">${esc(r)}</button>`).join("")}</div>`:""}</span></td></tr>`+
-    (isOpen?`<tr class="detail"><td></td><td colspan="${compact?7:8}">${breakdown(c)}</td></tr>`:"");
+    (isOpen?`<tr class="detail"><td></td><td colspan="${compact?7:8}">${breakdown(c)}</td></tr>`:"")+
+    (masterFor===k?`<tr class="detail"><td></td><td colspan="${compact?7:8}">${masterForm(masterDefaults(c))}</td></tr>`:"");
   }).join("")+"</tbody></table></div>";
 }
 function breakdown(c){
@@ -87,7 +92,31 @@ function breakdown(c){
       ${c.mercari_similar_url?`<a href="${esc(c.mercari_similar_url)}" target="_blank" rel="noopener">メルカリの同ジャンル出品一覧 ↗</a>`:""}
       <div class="note">関税は「米国の買い手比率 ${pct(S.costs?.us_buyer_share)} × 関税率 ${pct(S.costs?.us_duty_rate)}」の見込み（外部環境ページで要確認）。</div></div></div>`;
 }
+// ---- マスター（継続仕入れ）登録フォーム
+let masterFor=null;
+function genreOf(c){return (S.rules.config_genres||[]).find(g=>g.id===c.target_id)||(S.rules.genres||[]).find(g=>g.id===c.target_id)||{}}
+function masterDefaults(c){
+  const g=genreOf(c);
+  // 指値の初期値: 「損益分岐 − カテゴリ下限利益」と「今回の仕入れ値×1.1」の小さい方（この値以下なら下限利益を確保）
+  const cap=Math.max(0,Math.min((c.breakeven_buy_jpy||0)-(c.min_profit_jpy||0),Math.round(c.buy_price_jpy*1.1/100)*100));
+  return {label:c.mercari_title.slice(0,40),category:c.category||g.category||"",mercari_query:g.mercari_query||c.mercari_title.slice(0,30),
+    ebay_query:g.ebay_query||"",max_buy_jpy:cap||c.buy_price_jpy,shipping_jpy:c.shipping_cost_jpy,source_ref:c.item_key}
+}
+function masterForm(d,{id=null,submit="マスターに登録"}={}){
+  const f=(n,l,v,cls="")=>`<label>${l}<input name="${n}" class="${cls}" value="${esc(v??"")}"></label>`;
+  return `<div class="form-inline" data-mf ${id?`data-id="${id}"`:""}>${f("label","名前",d.label,"w2")}${f("mercari_query","メルカリ検索語",d.mercari_query,"w2")}${f("ebay_query","eBay検索語（相場）",d.ebay_query,"w2")}
+    ${f("max_buy_jpy","指値（仕入れ上限 円）",d.max_buy_jpy)}${f("shipping_jpy","実送料（円）",d.shipping_jpy)}${f("min_profit_jpy","下限利益（空=カテゴリ基準）",d.min_profit_jpy)}
+    ${f("exclude","除外語（空白区切り）",d.exclude,"w2")}<label>カテゴリ<select name="category">${(S.plan.categories||[]).map(c=>`<option ${c["カテゴリ"]===d.category?"selected":""}>${esc(c["カテゴリ"])}</option>`).join("")}</select></label>
+    <input type="hidden" name="source_ref" value="${esc(d.source_ref||"")}"><button class="btn dark sm" data-msave>${submit}</button></div>
+    <div class="meta" style="margin-top:4px">マスター＝「当たり」と分かった商品を、指値と実送料つきで継続監視します。指値以下の新しい出品が出たら候補の先頭に★付きで出し、通知します。</div>`;
+}
+async function saveMaster(btn){
+  const box=btn.closest("[data-mf]"), o={}; box.querySelectorAll("[name]").forEach(i=>o[i.name]=i.value); if(box.dataset.id) o.id=box.dataset.id;
+  const r=await (await post("/api/watch",o)).json(); toast(r.message); if(r.ok){masterFor=null; editing=null; load()}
+}
 function bindRows(){
+  $$("[data-master]").forEach(b=>b.onclick=()=>{masterFor=masterFor===b.dataset.master?null:b.dataset.master;render()});
+  $$("[data-msave]").forEach(b=>b.onclick=()=>saveMaster(b));
   $$("[data-q]").forEach(b=>b.onclick=()=>addQ(b.dataset.q));
   $$("[data-o]").forEach(b=>b.onclick=e=>{e.preventDefault();const k=b.dataset.o;open.has(k)?open.delete(k):open.add(k);render()});
   $$("[data-m]").forEach(b=>b.onclick=e=>{e.stopPropagation();menuFor=menuFor===b.dataset.m?null:b.dataset.m;render()});
@@ -172,4 +201,24 @@ VIEWS.dismissed=["実務1 仕入れ / 見送りリスト",()=>{
       <td>${esc(x.reason)}</td><td class="num">${yen(x.buy_price_jpy)}</td><td class="num">${yen(x.profit_jpy)}</td>
       <td class="num"><button class="btn sm" data-undo="${esc(x.item_key)}" data-kind="dismiss">候補に戻す</button></td></tr>`).join("")}</tbody></table></div>`
     :'<div class="empty">見送った出品はありません。</div>'}</div>`;
+}];
+
+VIEWS.master=["実務1 仕入れ / マスター（継続仕入れ）",()=>{
+  const w=S.watch||[], hits=id=>S.candidates.filter(c=>c.target_id==="m"+id&&!c.near_miss);
+  return h1("当たり商品を、指値で待ち伏せする。","一度仕入れて利益が出た商品（または確実に利益が出る型番）を、指値と実送料つきで登録します。自動スキャンのたびに監視し、指値以下の新着が出たら候補の先頭に★付きで出して通知します（0001_sedoriの「マスター登録→定点監視」を統合）。")
+  + `<div class="chips"><span class="chip">登録 <b>${w.length}</b></span><span class="chip">監視中 <b>${w.filter(x=>x.active).length}</b></span>
+     <span class="chip">通知 <b>${S.settings?.notify_configured?"Slack設定済み":"未設定（ルール・前提で設定）"}</b></span></div>`
+  + h2("· 01","登録済みマスター")
+  + (w.length?`<div class="card"><div class="wide"><table><thead><tr><th>名前・検索語</th><th class="num">指値</th><th class="num">実送料</th><th class="num">下限利益</th><th class="num">今のヒット</th><th>状態</th><th></th></tr></thead><tbody>
+    ${w.map(x=>`<tr><td class="wrap"><b>${esc(x.label)}</b><div class="meta">${esc(x.category||"")} ・ メルカリ「${esc(x.mercari_query)}」 ・ eBay「${esc(x.ebay_query)}」${x.exclude?` ・ 除外「${esc(x.exclude)}」`:""}</div></td>
+      <td class="num">${yen(x.max_buy_jpy)}</td><td class="num">${yen(x.shipping_jpy)}</td><td class="num">${x.min_profit_jpy!=null?yen(x.min_profit_jpy):"カテゴリ基準"}</td>
+      <td class="num">${hits(x.id).length?`<a href="#" data-go="cands"><b>${hits(x.id).length}件</b></a>`:"0"}</td>
+      <td>${x.active?'<span class="badge ok">監視中</span>':'<span class="badge na">停止</span>'}</td>
+      <td class="num"><button class="btn sm" data-mtoggle="${x.id}" data-on="${x.active?0:1}">${x.active?"停止":"再開"}</button> <button class="btn sm ghost" data-edit="w${x.id}">編集</button> <button class="btn sm ghost" data-mdel="${x.id}">削除</button></td></tr>`
+      +(editing==="w"+x.id?`<tr class="detail"><td colspan="7">${masterForm(x,{id:x.id,submit:"保存"})}</td></tr>`:"")).join("")}
+    </tbody></table></div></div>`:`<div class="card"><div class="empty">まだ登録がありません。仕入れ候補の「マスター登録」か、着金済みSKUの「マスター登録」から追加できます。</div></div>`)
+  + h2("· 02","手動で登録")+`<div class="card" style="padding:14px 18px">${masterForm({label:"",mercari_query:"",ebay_query:"",max_buy_jpy:"",shipping_jpy:"",category:"カメラ・交換レンズ"})}</div>`;
+},()=>{
+  $$("[data-mtoggle]").forEach(b=>b.onclick=async()=>{await post("/api/watch",{id:b.dataset.mtoggle,active:b.dataset.on});load()});
+  $$("[data-mdel]").forEach(b=>b.onclick=async()=>{if(!confirm("このマスターを削除しますか？"))return;await fetch("/api/watch?id="+b.dataset.mdel,{method:"DELETE"});load()});
 }];

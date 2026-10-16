@@ -149,6 +149,29 @@ def migrate(con: sqlite3.Connection) -> None:
           updated_at TEXT
         );
 
+        -- マスター（継続仕入れ）: 当たりと確定した商品を、指値・実送料つきで継続監視（0001_sedori の watchlist）
+        CREATE TABLE IF NOT EXISTS watch_items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          label TEXT NOT NULL,
+          category TEXT,
+          mercari_query TEXT NOT NULL,
+          ebay_query TEXT NOT NULL,
+          max_buy_jpy INTEGER,          -- 指値（これ以下の出品だけ拾う）
+          shipping_jpy INTEGER,         -- 実送料（実績から）
+          min_profit_jpy INTEGER,       -- このマスター固有の下限（空ならカテゴリ基準）
+          exclude TEXT,                 -- 除外語（空白区切り）
+          source_ref TEXT,              -- 登録元（候補のitem_key / SKU）
+          active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT
+        );
+
+        -- 通知済み（同じ出品を何度も通知しない）
+        CREATE TABLE IF NOT EXISTS notified (
+          item_key TEXT PRIMARY KEY,
+          notified_at TEXT NOT NULL
+        );
+
         -- 操作ログ（仕入れファネルの実績集計に使う）
         CREATE TABLE IF NOT EXISTS events (
           id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -4,7 +4,7 @@ const NAV=[
   {sec:"上流｜戦略・計画",lane:"up",items:[
     ["dash","経営ダッシュボード"],["env","外部環境"],["strategy","戦略・カテゴリ"],["kpi","KPI・ファネル"],["tasks","計画タスク","tasks"],["sim","資本シミュレーター"]]},
   {sec:"実務 1｜仕入れ",lane:"ops",items:[
-    ["cands","仕入れ候補","cands"],["map","収益機会マップ"],["queue","仕入れキュー","queue"],["dismissed","見送りリスト","dismissed"]]},
+    ["cands","仕入れ候補","cands"],["map","収益機会マップ"],["queue","仕入れキュー","queue"],["master","マスター（継続仕入れ）","master"],["dismissed","見送りリスト","dismissed"]]},
   {sec:"実務 2｜入荷・出品・在庫",lane:"ops",items:[
     ["inbound","入荷・検品","inbound"],["listing","出品","ready"],["stock","在庫・値付け","listed"]]},
   {sec:"実務 3｜販売・発送",lane:"ops",items:[["ship","発送","sold"]]},
@@ -56,7 +56,7 @@ function navCounts(){
   const c=S.ops.counts||{};
   return {cands:passing().length,queue:S.queue.length,dismissed:S.dismissed.length,
     inbound:(c.ordered||0)+(c.arrived||0),ready:c.ready||0,listed:c.listed||0,sold:c.sold||0,shipped:c.shipped||0,
-    tasks:dueTasks().length};
+    tasks:dueTasks().length,master:(S.watch||[]).filter(w=>w.active).length};
 }
 function renderNav(){
   const cnt=navCounts(), o=S.ops||{};

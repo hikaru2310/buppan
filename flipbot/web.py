@@ -12,6 +12,9 @@ POST /api/purchased       仕入れ済みにする（取引履歴へ）{"item_ke
 DELETE /api/purchased?key= 取引履歴から戻す
 POST /api/sku            SKUの工程を進める         {"sku": ..., "action": arrive/inspect_pass/.../pay, "fields": {...}}
 POST /api/plan-sync       事業計画シートを今すぐ読み直す
+POST /api/watch           マスター（継続仕入れ）を登録・更新 {"id"?, "label", "mercari_query", ...}
+DELETE /api/watch?id=     マスターを削除
+POST /api/notify-test     通知のテスト送信
 POST /api/settings        画面入力の設定値（現金残高など）{"cash_jpy": ...}
 GET  /api/queue.csv       仕入れキューを CSV で書き出し
 GET  /api/skus.csv        全SKU（在庫・取引）を CSV で書き出し
@@ -136,6 +139,7 @@ class AppState:
                 {"purchased_at": r["purchased_at"], "actual_buy_jpy": r["actual_buy_jpy"], **json.loads(r["payload_json"])}
                 for r in con.execute("SELECT * FROM purchases ORDER BY purchased_at DESC")
             ]
+            watch = [dict(r) for r in con.execute("SELECT * FROM watch_items ORDER BY active DESC, id DESC")]
             rate, rate_src, rate_at = fx_mod.current_rate(cfg)
             cfg.fx.jpy_per_usd = round(rate, 2)
             plan = plan_mod.load(cfg)
@@ -152,6 +156,14 @@ class AppState:
             "ops": m,
             "env": env,
             "costs": cfg.costs.model_dump(),
+            "watch": watch,
+            "settings": {
+                "mercari_source": cfg.app.mercari_source,
+                "notify_configured": bool(cfg.notify.slack_webhook_url),
+                "notify": {k: v for k, v in cfg.notify.model_dump().items() if k != "slack_webhook_url"},
+                "category_excludes": cfg.category_excludes,
+                "auto_scan_minutes": cfg.app.auto_scan_minutes,
+            },
             "scanning": self.busy == "scan",
             "next_scan_at": self.next_scan_at,
             "logging_in": self.busy == "login",
@@ -249,6 +261,37 @@ class AppState:
                 con.commit()
                 return True, "OK"
             return ops.apply_action(con, sku, action, fields)
+        finally:
+            con.close()
+
+    WATCH_FIELDS = ("label", "category", "mercari_query", "ebay_query", "max_buy_jpy", "shipping_jpy", "min_profit_jpy", "exclude", "source_ref", "active")
+
+    def save_watch(self, body: dict[str, Any]) -> tuple[bool, str]:
+        vals = {k: body.get(k) for k in self.WATCH_FIELDS if k in body}
+        for k in ("max_buy_jpy", "shipping_jpy", "min_profit_jpy", "active"):
+            if k in vals:
+                vals[k] = int(float(vals[k])) if vals[k] not in (None, "") else None
+        con = self._con()
+        try:
+            if body.get("id"):
+                vals["updated_at"] = db.utc_now_iso()
+                con.execute(f"UPDATE watch_items SET {', '.join(f'{k}=?' for k in vals)} WHERE id=?", (*vals.values(), int(body["id"])))
+            else:
+                if not (vals.get("label") and vals.get("mercari_query") and vals.get("ebay_query")):
+                    return False, "名前・メルカリ検索語・eBay検索語は必須です"
+                vals.setdefault("active", 1)
+                vals["created_at"] = db.utc_now_iso()
+                con.execute(f"INSERT INTO watch_items({', '.join(vals)}) VALUES({', '.join('?' * len(vals))})", tuple(vals.values()))
+            con.commit()
+            return True, "保存しました（次のスキャンから監視します）"
+        finally:
+            con.close()
+
+    def delete_watch(self, wid: int) -> None:
+        con = self._con()
+        try:
+            con.execute("DELETE FROM watch_items WHERE id=?", (wid,))
+            con.commit()
         finally:
             con.close()
 
@@ -396,6 +439,14 @@ def _make_handler(state: AppState):
             elif path == "/api/plan-sync":
                 p = plan_mod.load(state.cfg, force=True)
                 self._json({"ok": "error" not in p, "message": p.get("error") or f"同期しました（{p.get('_synced_at')}）"})
+            elif path == "/api/watch":
+                ok, msg = state.save_watch(body)
+                self._json({"ok": ok, "message": msg}, 200 if ok else 400)
+            elif path == "/api/notify-test":
+                from .notify import send_test
+
+                ok, msg = send_test(state.cfg)
+                self._json({"ok": ok, "message": msg})
             elif path == "/api/settings":
                 for k in ("cash_jpy",):
                     if k in body:
@@ -408,7 +459,10 @@ def _make_handler(state: AppState):
             u = urlparse(self.path)
             key = (parse_qs(u.query).get("key") or [""])[0]
             table = {"/api/queue": "purchase_queue", "/api/dismiss": "dismissed", "/api/purchased": "purchases"}.get(u.path)
-            if table:
+            if u.path == "/api/watch":
+                state.delete_watch(int((parse_qs(u.query).get("id") or ["0"])[0]))
+                self._json({"ok": True})
+            elif table:
                 state.delete(table, key)
                 self._json({"ok": True})
             else:

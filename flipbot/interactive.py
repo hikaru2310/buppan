@@ -93,7 +93,7 @@ async def ebay_login_until_ready(cfg: Config, *, timeout_sec: int = 600) -> str:
                 html = await session.page.content()
             except PlaywrightError:
                 continue
-            if "/sch/" in session.page.url and parse_ebay_sold_html(html):
+            if "/sch/" in session.page.url and parse_ebay_sold_html(html, cfg.fx.jpy_per_usd):
                 await asyncio.sleep(2)  # クッキー保存の猶予
                 return "ok"
         return "timeout"
