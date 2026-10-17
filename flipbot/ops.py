@@ -2,8 +2,12 @@
 
 SKUのステータス:
   ordered(購入済・到着待ち) → arrived(到着・検品待ち) → ready(検品合格・出品待ち) → listed(出品中)
-  → sold(売約・発送待ち) → shipped(発送済・着金待ち) → paid(着金済)
-  例外: rejected(検品不合格) / returned(返品)
+  → sold(売約・発送待ち) → shipped(発送済・着金待ち) → paid(完了)
+  例外: rejected(検品不合格・廃棄) / returned(返品) → 再検品（arrived）か 損失処理（rejected）
+
+着金の考え方: Payoneer/Wise の入金は複数取引のまとめ払いなので、SKUごとの入金額は求めない。
+  実現利益 = 売価から手数料モデルで計算した受取額（eBayの手数料実額があればそれ）− 仕入 − 実送料 − 関税 − 梱包 − 作業 − 返品損失
+  月ごとの入金総額は「KPI・ファネル」の月次実績に入れ、計算上の受取額と照合する。
 """
 from __future__ import annotations
 
@@ -30,7 +34,7 @@ STATUSES = {
 }
 IN_STOCK = ("ordered", "arrived", "ready", "listed")
 SOLD = ("sold", "shipped", "paid")
-HANDLING_DAYS = 3  # 売れてから発送までの社内期限
+HANDLING_DAYS = 3  # 売れてから発送までの社内期限（config の app.handling_days で上書き）
 
 # action -> (遷移元, 遷移先, 日時カラム, 受け付けるカラム)
 ACTIONS: dict[str, tuple[tuple[str, ...], str, Optional[str], tuple[str, ...]]] = {
@@ -41,14 +45,28 @@ ACTIONS: dict[str, tuple[tuple[str, ...], str, Optional[str], tuple[str, ...]]] 
     "reprice": (("listed",), "listed", None, ("list_price_usd",)),
     "sell": (("listed", "ready"), "sold", "sold_at", ("sold_price_usd", "buyer_country")),
     "ship": (("sold",), "shipped", "shipped_at", ("carrier", "tracking", "shipping_cost_jpy", "duty_jpy")),
-    "pay": (("shipped", "sold"), "paid", "paid_at", ("payout_jpy",)),
-    "return": (("sold", "shipped", "paid"), "returned", "returned_at", ("return_reason", "notes")),
+    "pay": (("shipped", "sold"), "paid", "paid_at", ("payout_jpy", "fees_usd")),
+    "return": (("sold", "shipped", "paid"), "returned", "returned_at", ("return_reason", "return_loss_jpy", "notes")),
+    # 返品後: 手元に戻ったら再検品へ / 戻らない・売れない場合は損失として処理
+    "restock": (("returned",), "arrived", "arrived_at", ("notes",)),
+    "writeoff": (("returned", "ready", "listed", "arrived"), "rejected", None, ("return_loss_jpy", "defect_reason", "notes")),
     "note": (tuple(STATUSES), "", None, ("notes", "ebay_url", "weight_g", "category")),
+    # 入力ミスの修正（状態は変えない）
+    "edit": (tuple(STATUSES), "", None, (
+        "title", "category", "buy_price_jpy", "purchased_at", "list_price_usd", "ebay_url", "sold_price_usd", "buyer_country",
+        "sold_at", "carrier", "tracking", "shipping_cost_jpy", "duty_jpy", "shipped_at", "payout_jpy", "fees_usd", "paid_at",
+        "weight_g", "return_loss_jpy", "return_reason", "defect_reason", "notes", "ebay_order_id")),
+}
+# 「一つ前に戻す」: 現在の状態 → (戻り先, 消す日時カラム)
+BACK = {
+    "arrived": ("ordered", "arrived_at"), "ready": ("arrived", "inspected_at"), "rejected": ("arrived", "inspected_at"),
+    "listed": ("ready", "listed_at"), "sold": ("listed", "sold_at"), "shipped": ("sold", "shipped_at"),
+    "paid": ("shipped", "paid_at"), "returned": ("shipped", "returned_at"),
 }
 EVENT_OF = {"arrive": "arrive", "inspect_pass": "inspect_pass", "inspect_fail": "inspect_fail", "list": "list",
             "sell": "sell", "ship": "ship", "pay": "pay", "return": "return"}
-NUMERIC = {"weight_g", "shipping_cost_jpy", "duty_jpy", "payout_jpy"}
-FLOATS = {"list_price_usd", "sold_price_usd"}
+NUMERIC = {"weight_g", "shipping_cost_jpy", "duty_jpy", "payout_jpy", "buy_price_jpy", "return_loss_jpy"}
+FLOATS = {"list_price_usd", "sold_price_usd", "fees_usd"}
 
 
 def _now() -> str:
@@ -93,11 +111,20 @@ def create_from_candidate(con: sqlite3.Connection, payload: dict[str, Any], *, a
 
 
 def apply_action(con: sqlite3.Connection, sku: str, action: str, fields: dict[str, Any]) -> tuple[bool, str]:
-    if action not in ACTIONS:
-        return False, "不明な操作です"
     row = con.execute("SELECT status FROM skus WHERE sku=?", (sku,)).fetchone()
     if not row:
         return False, "SKUが見つかりません"
+    if action == "back":
+        if row["status"] not in BACK:
+            return False, "これ以上は戻せません"
+        dest, col = BACK[row["status"]]
+        extra = ", inspection=NULL" if col == "inspected_at" else ""
+        con.execute(f"UPDATE skus SET status=?, {col}=NULL{extra}, updated_at=? WHERE sku=?", (dest, _now(), sku))
+        db.log_event(con, "back", sku)
+        con.commit()
+        return True, f"「{STATUSES[dest]}」に戻しました"
+    if action not in ACTIONS:
+        return False, "不明な操作です"
     sources, dest, ts_col, allowed = ACTIONS[action]
     if row["status"] not in sources:
         return False, f"「{STATUSES.get(row['status'])}」の商品にはこの操作はできません"
@@ -105,7 +132,14 @@ def apply_action(con: sqlite3.Connection, sku: str, action: str, fields: dict[st
     for k in allowed:
         if k in fields and fields[k] not in (None, ""):
             v = fields[k]
-            sets[k] = int(float(v)) if k in NUMERIC else float(v) if k in FLOATS else str(v)
+            if k.endswith("_at") and len(str(v)) == 10:  # 画面の日付入力（YYYY-MM-DD）は日本時間の正午として保存
+                v = f"{v}T03:00:00+00:00"
+            try:
+                sets[k] = int(float(v)) if k in NUMERIC else float(v) if k in FLOATS else str(v)
+            except ValueError:
+                return False, f"「{k}」の値が数値ではありません: {v}"
+        elif action == "edit" and k in fields and fields[k] == "" and k not in ("title", "buy_price_jpy", "purchased_at"):
+            sets[k] = None  # 修正で空欄にした項目は消す
     if dest:
         sets["status"] = dest
     if ts_col:
@@ -149,15 +183,34 @@ def sku_economics(cfg: Config, r: sqlite3.Row) -> dict[str, Any]:
     cost = r["buy_price_jpy"] + other
     floor_usd = (cost + fixed) / a if a > 0 else None  # 貢献利益0になる売価
     realized: Optional[int] = None
-    if r["status"] in ("paid",) and r["payout_jpy"]:
-        ship = r["shipping_cost_jpy"] if r["shipping_cost_jpy"] is not None else int(p.get("shipping_cost_jpy", 0))
-        realized = int(r["payout_jpy"]) - r["buy_price_jpy"] - ship - (r["duty_jpy"] or 0) \
-            - int(p.get("packing_jpy", cfg.costs.packing_material_jpy)) - int(p.get("labor_jpy", cfg.costs.labor_jpy))
     estimated: Optional[int] = None
-    if r["status"] in SOLD and r["sold_price_usd"]:
-        estimated = int(a * r["sold_price_usd"] - fixed - cost)
+    received = received_jpy(cfg, r)
+    loss = r["return_loss_jpy"] or 0
+    if received is not None:
+        ship = r["shipping_cost_jpy"] if r["shipping_cost_jpy"] is not None else int(p.get("shipping_cost_jpy", 0))
+        value = received - r["buy_price_jpy"] - ship - (r["duty_jpy"] or 0) - loss \
+            - int(p.get("packing_jpy", cfg.costs.packing_material_jpy)) - int(p.get("labor_jpy", cfg.costs.labor_jpy))
+        if r["status"] == "paid":
+            realized = int(value)  # 完了＝送料・関税の実額が入っている前提で「実現」とする
+        elif r["status"] in ("sold", "shipped"):
+            estimated = int(value)
+    if r["status"] in ("returned", "rejected") and (loss or r["status"] == "rejected"):
+        # 返品・不合格の損失（仕入れ値は戻らない前提。返品で手元に戻り再販できるなら restock）
+        realized = -int(loss or r["buy_price_jpy"])
     return {"floor_usd": round(floor_usd, 2) if floor_usd else None, "realized_jpy": realized,
-            "estimated_jpy": estimated, "cost_jpy": cost}
+            "estimated_jpy": estimated, "cost_jpy": cost, "received_jpy": received}
+
+
+def received_jpy(cfg: Config, r: sqlite3.Row) -> Optional[int]:
+    """売上から手元に残る円（換金後）。入金額が入っていればそれ、eBayの手数料実額があればそれで計算、なければ手数料モデル。"""
+    if r["payout_jpy"]:
+        return int(r["payout_jpy"])
+    if not r["sold_price_usd"]:
+        return None
+    e = cfg.fees.ebay
+    fees = r["fees_usd"] if r["fees_usd"] is not None else \
+        r["sold_price_usd"] * (e.final_value_fee_rate + e.international_fee_rate + e.ad_rate) + e.payment_fixed_fee_usd
+    return int((r["sold_price_usd"] - fees) * cfg.fx.jpy_per_usd * (1 - e.payout_fx_spread_rate))
 
 
 def reprice_suggestion(cfg: Config, r: sqlite3.Row, econ: dict[str, Any], now: datetime) -> Optional[dict[str, Any]]:
@@ -228,7 +281,7 @@ def metrics(con: sqlite3.Connection, cfg: Config, plan: dict[str, Any]) -> dict[
                  days_listed=_days_since(r["listed_at"], now) if r["status"] == "listed" else None,
                  reprice=reprice_suggestion(cfg, r, econ, now),
                  comps=p.get("comps", [])[:3], ebay_sold_search_url=p.get("ebay_sold_search_url"),
-                 ship_due=((_dt(r["sold_at"]) + timedelta(days=HANDLING_DAYS)).isoformat() if r["status"] == "sold" and r["sold_at"] else None))
+                 ship_due=((_dt(r["sold_at"]) + timedelta(days=cfg.app.handling_days)).isoformat() if r["status"] == "sold" and r["sold_at"] else None))
         if r["status"] == "sold" and d["ship_due"]:
             d["ship_overdue"] = now > _dt(d["ship_due"])  # type: ignore[operator]
         skus.append(d)
@@ -280,7 +333,11 @@ def metrics(con: sqlite3.Connection, cfg: Config, plan: dict[str, Any]) -> dict[
     cash = int(cash_row["value"]) if cash_row and cash_row["value"] else None
     plan_month = next((m for m in plan.get("monthly", []) if int(m.get("月", 0)) == cur), {})
 
+    labels = con.execute("SELECT SUM(label) good, COUNT(*) n FROM match_labels").fetchone()
     indicators = {
+        # 照合精度（実測）: 候補の内訳で ✓/✗ を付けた成約品のうち「同じ商品」だった割合
+        "match_precision": (labels["good"] or 0) / labels["n"] if labels and labels["n"] else None,
+        "match_labels_n": labels["n"] if labels else 0,
         "forecast_error": sum(errors) / len(errors) if errors else None,
         "forecast_n": len(errors),
         "mispurchase_rate": len(mismatch) / len(skus) if skus else None,
@@ -317,7 +374,30 @@ def metrics(con: sqlite3.Connection, cfg: Config, plan: dict[str, Any]) -> dict[
             status = "alert" if hit else "ok"
         risks.append({**rk, "metric": key, "value": val, "status": status})
 
+    # 営業利益の実績 = 貢献利益 − 固定費（実額が入っていれば実額、なければ計画値）
+    for m in months:
+        pm = next((x for x in plan.get("monthly", []) if int(x.get("月", 0)) == m["month"]), {})
+        fixed = m["fixed_cost_man"] if m["fixed_cost_man"] is not None else pm.get("固定費(万円)")
+        m["fixed_used_man"], m["fixed_is_actual"] = fixed, m["fixed_cost_man"] is not None
+        m["op_profit_man"] = round(m["contribution_man"] - (fixed or 0), 1)
+        days = (_dt(_month_bounds(cfg, m["month"])[1]) - _dt(_month_bounds(cfg, m["month"])[0])).days  # type: ignore[operator]
+        m["owner_hours_week"] = round(m["owner_hours"] / (days / 7), 1) if m["owner_hours"] is not None else None
+    indicators["owner_hours_week"] = actual.get("owner_hours_week")
+
+    restrictions = _restrictions(plan, indicators, cats, skus, inv_cost, risks)
+    # 実送料の学習: ジャンルごとの実送料の中央値（発送済みSKUから）
+    ship_learn: dict[str, dict[str, Any]] = {}
+    for s_ in skus:
+        if s_["shipping_cost_jpy"] is not None and s_["genre"]:
+            ship_learn.setdefault(s_["genre"], {"values": []})["values"].append(s_["shipping_cost_jpy"])
+    for g, v in ship_learn.items():
+        vals = sorted(v["values"])
+        v.update(n=len(vals), median=vals[len(vals) // 2])
+        del v["values"]
+
     return {
+        "restrictions": restrictions,
+        "ship_learn": ship_learn,
         "now": now.isoformat(),
         "month_index": idx,
         "month_label": month_label(cfg, cur),
@@ -336,6 +416,40 @@ def metrics(con: sqlite3.Connection, cfg: Config, plan: dict[str, Any]) -> dict[
         "funnel": _funnel(con, cfg, plan, cur),
         "cash_jpy": cash,
     }
+
+
+def _restrictions(plan: dict[str, Any], ind: dict[str, Any], cats: dict[str, Any], skus: list[dict[str, Any]],
+                  inv_cost: int, risks: list[dict[str, Any]]) -> dict[str, Any]:
+    """リスク管理・資金配分ルールの「自動対応」を、仕入れの制限として具体化する。
+    global: 全体の制限（拡大停止・資金不足など） / categories: カテゴリ別の仕入れ抑制。"""
+    out: dict[str, Any] = {"global": [], "categories": {}}
+    alert = {r.get("リスク"): r for r in risks if r.get("status") == "alert"}
+    if "利益計算誤差" in alert:
+        out["global"].append("予測利益誤差が閾値超え → 仕入れの拡大を停止（今の量を維持）")
+    if "資金不足" in alert:
+        out["global"].append("自由現金が下限未満 → 全体の仕入れ上限を縮小")
+    if "AI誤照合" in alert:
+        out["global"].append("誤仕入れ率が閾値超え → 照合の確認を厳しく（内訳の成約品を必ず目視）")
+    if "仕入れ供給不足" in alert:
+        out["global"].append("購入成功数が計画比80%未満 → カテゴリ・マスターの再配分を検討")
+    cat_plan = {c.get("カテゴリ"): c for c in plan.get("categories", [])}
+    for name, c in cats.items():
+        reasons = []
+        # 在庫が少ないうちは比率が極端になるので、在庫5件以上・30万円以上になってから判定する
+        if inv_cost >= 300000 and sum(1 for s_ in skus if s_["status"] in IN_STOCK) >= 5 and c["share"] > 0.40:
+            reasons.append(f"在庫比率 {c['share']:.0%} が1カテゴリ上限40%超")
+        lim = cat_plan.get(name, {}).get("返品率上限")
+        sold_n = c["sold"] + c["returns"]
+        if lim and sold_n >= 5 and c["returns"] / sold_n > lim:
+            reasons.append(f"返品率 {c['returns'] / sold_n:.0%} が上限 {lim:.0%} 超")
+        stock = [s for s in skus if (s["category"] or "未分類") == name and s["status"] in IN_STOCK]
+        cost = sum(s["buy_price_jpy"] for s in stock)
+        old = sum(s["buy_price_jpy"] for s in stock if (s["days_in_stock"] or 0) > 90)
+        if cost and len(stock) >= 3 and old / cost > 0.10:
+            reasons.append(f"90日超在庫 {old / cost:.0%} が10%超 → 仕入上限30%削減・値下げ")
+        if reasons:
+            out["categories"][name] = reasons
+    return out
 
 
 def _num(v: Any) -> Optional[float]:
@@ -373,7 +487,14 @@ def _month_actual(con, cfg: Config, idx: int, skus: list[dict[str, Any]], fx: fl
     inv_end = sum(s["buy_price_jpy"] for s in skus if s["purchased_at"] < month_end and (not s["sold_at"] or s["sold_at"] >= month_end)
                   and s["status"] not in ("rejected",))
     contrib = sum(profits)
+    ma = con.execute("SELECT * FROM month_actuals WHERE month=?", (idx,)).fetchone()
+    # 入金の照合: この月に完了したSKUの「計算上の受取額」と、実際の入金総額（月次実績に入力）を比べる
+    expected_payout = sum((s.get("received_jpy") or 0) for s in skus if inm(s["paid_at"]))
     return {
+        "fixed_cost_man": ma["fixed_cost_man"] if ma else None,
+        "payout_man": ma["payout_man"] if ma else None,
+        "owner_hours": ma["owner_hours"] if ma else None,
+        "expected_payout_man": round(expected_payout / 10000, 1),
         "month": idx,
         "label": month_label(cfg, idx),
         "sales": len(sold),
@@ -462,6 +583,10 @@ def _gates(plan: dict[str, Any], months: list[dict[str, Any]], ind: dict[str, An
                 val = last.get("purchases"); ok = val is not None and val >= target
             elif label == "在庫":
                 val = last.get("inventory_days"); ok = val is not None and val <= target
+            elif label == "オーナー":
+                val = last.get("owner_hours_week"); ok = val is not None and val <= target
+            elif label == "営業利益":
+                val = last.get("op_profit_man"); ok = val is not None and val >= target
             else:
                 val, ok = None, None
             checks.append({"label": label, "target": target, "unit": unit, "value": val, "ok": ok if val is not None else None})

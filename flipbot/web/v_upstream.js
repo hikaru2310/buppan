@@ -17,7 +17,8 @@ function monthProgress(){const d=new Date();const days=new Date(d.getFullYear(),
 // ---------- 経営ダッシュボード
 VIEWS.dash=["上流 / 経営ダッシュボード",()=>{
   const pm=planMonth(), a=actualM(), o=S.ops, c=o.counts||{}, ind=o.indicators||{};
-  const fixed=pm["固定費(万円)"]||0, opProfit=num(a.contribution_man)?a.contribution_man-fixed:null;
+  const fixed=a.fixed_used_man??pm["固定費(万円)"]??0, opProfit=num(a.op_profit_man)?a.op_profit_man:null;
+  const rs=o.restrictions||{global:[],categories:{}};
   const sc=(S.plan.scenarios||[]);
   const risks=(o.risks||[]).slice().sort((x,y)=>(y.status==="alert")-(x.status==="alert"));
   const nextGate=(o.gates||[]).find(g=>!g.reached)||(o.gates||[])[0];
@@ -39,12 +40,14 @@ VIEWS.dash=["上流 / 経営ダッシュボード",()=>{
   + planBanner()
   + h2("· 01","今日やること","工程ごとの件数。押すとその工程へ移動します")
   + `<div class="flow">${flow.map(([v,l,n,s,cls])=>`<div class="st ${cls||""}" data-go="${v}"><div class="l">${l}</div><div class="v">${n}</div><div class="s">${s}</div></div>`).join("")}</div>`
+  + ((rs.global||[]).length||Object.keys(rs.categories||{}).length?h2("· !","仕入れの制限（リスク管理の自動対応）","閾値を超えた指標に応じて、仕入れを抑えています")
+      +`<div class="card notes">${(rs.global||[]).map(x=>`<div class="n error">全体：${esc(x)}</div>`).join("")}${Object.entries(rs.categories||{}).map(([k,v])=>`<div class="n warn">${esc(k)}：${v.map(esc).join("・")}（候補に「仕入れ抑制中」と表示）</div>`).join("")}</div>`:"")
   + h2("· 02","今月の計画対実績",`計画 = シート「12ヶ月計画」${o.month_index}か月目（月間値）。実績は月初からの累計`)
   + `<div class="kpis">
       ${kpiTile("販売数",a.sales,pm["販売数"],{fmt:v=>v+"件",tag:"SALES",sub:`経過按分の目安 ${num(pm["販売数"])?Math.round(pm["販売数"]*prog)+"件":"—"}`})}
       ${kpiTile("貢献利益/件",a.profit_per_unit,pm["貢献利益/件(円)"],{fmt:yen,tag:"UNIT"})}
       ${kpiTile("購入成功数",a.purchases,(S.plan.kpi_plan||[]).find(k=>k["月"]==o.month_index)?.["仕入成功数_計画"],{fmt:v=>v+"件",tag:"SUPPLY"})}
-      ${kpiTile("営業利益",opProfit,pm["営業利益(万円)"],{fmt:manFmt,tag:"OP",sub:`貢献利益${manFmt(a.contribution_man)} − 固定費${manFmt(fixed)}`})}
+      ${kpiTile("営業利益",opProfit,pm["営業利益(万円)"],{fmt:manFmt,tag:"OP",sub:`貢献利益${manFmt(a.contribution_man)} − 固定費${manFmt(fixed)}${a.fixed_is_actual?"（実額）":"（計画値）"}`})}
     </div>
     <div class="kpis" style="margin-top:10px">
       ${kpiTile("売上",a.revenue_man,pm["売上(万円)"],{fmt:manFmt,tag:"REV"})}
@@ -178,13 +181,15 @@ VIEWS.kpi=["上流 / KPI・ファネル",()=>{
   + h2("· 02","品質・在庫の指標",`シート「KPI実績」の右側の列`)
   + `<div class="kpis">
       ${kpiTile("返品率",ind.return_rate,0.04,{fmt:v=>pct(v,1),better:"low",tag:"上限4%"})}
-      ${kpiTile("照合精度（誤仕入れなし率）",num(ind.mispurchase_rate)?1-ind.mispurchase_rate:null,0.95,{fmt:v=>pct(v,1),tag:"P0目標95%"})}
+      ${kpiTile("照合精度（実測）",ind.match_precision,0.95,{fmt:v=>pct(v,1),tag:"P0目標95%",sub:`内訳の✓/✗ ${ind.match_labels_n||0}件 ・ 誤仕入れなし率 ${num(ind.mispurchase_rate)?pct(1-ind.mispurchase_rate,1):"—"}`})}
       ${kpiTile("予測利益誤差",ind.forecast_error,0.10,{fmt:v=>pct(v,1),better:"low",tag:"基準10%"})}
       ${kpiTile("90日超在庫率",ind.over90_rate,0.10,{fmt:v=>pct(v,1),better:"low",tag:"上限10%"})}
     </div>`
-  + h2("· 03","12か月計画と実績","実績は経過した月のみ")
+  + h2("· 03","月次の実績入力","固定費の実額・その月の入金総額・オーナー稼働。営業利益とステージゲート（オーナー稼働h/週）の判定に使います")
+  + monthActualForm()
+  + h2("· 04","12か月計画と実績","実績は経過した月のみ")
   + `<div class="card"><div class="wide"><table><thead><tr><th>月</th><th class="num">販売数 計画/実績</th><th class="num">貢献利益/件 計画/実績</th><th class="num">売上 計画/実績</th><th class="num">営業利益 計画/実績</th><th class="num">在庫日数 計画/実績</th><th class="num">仕入成功 計画/実績</th><th>マイルストーン</th></tr></thead><tbody>
-    ${months.map(m=>{const i=m["月"],a=row(i),k=kp.find(x=>x["月"]==i)||{};const op=a&&num(a.contribution_man)?a.contribution_man-(m["固定費(万円)"]||0):null;
+    ${months.map(m=>{const i=m["月"],a=row(i),k=kp.find(x=>x["月"]==i)||{};const op=a&&num(a.op_profit_man)?a.op_profit_man:null;
       const pv=(p,v,fmt,better="high")=>`${fmt(p)} / ${a?`<b class="${num(v)&&num(p)?((better==="high"?v>=p:v<=p)?"pos":"neg"):""}">${fmt(v)}</b>`:'<span class="meta">—</span>'}`;
       return `<tr style="${i==S.ops.month_index?"background:var(--accent-bg)":""}"><td><b>${i}</b><div class="meta">${esc((a&&a.label)||"")}</div></td>
       <td class="num">${pv(m["販売数"],a?.sales,v=>num(v)?v+"件":"—")}</td><td class="num">${pv(m["貢献利益/件(円)"],a?.profit_per_unit,yen)}</td>
@@ -197,9 +202,26 @@ VIEWS.kpi=["上流 / KPI・ファネル",()=>{
   const cp=async(t,msg)=>{try{await navigator.clipboard.writeText(t);toast(msg)}catch(e){prompt("コピーできなかったので、ここから手動でコピーしてください",t)}};
   const k=$("#copyKpi"); if(k) k.onclick=async()=>{const t=await (await fetch("/api/kpi.tsv?month="+$("#kpiMonth").value)).text();cp(t,"コピーしました。シート「KPI実績」の該当月のA列に貼り付けてください")};
   const fb=$("#copyFunnel"); if(fb) fb.onclick=()=>cp((S.ops.funnel||[]).map(x=>x.actual??"").join("\n"),"コピーしました。シート「仕入れファネル」の実績列（D列）の先頭に貼り付けてください");
+  const mm=$("#maMonth"); if(mm) mm.onchange=()=>{localSet("maMonth",mm.value);render()};
+  const ms=$("#maSave"); if(ms) ms.onclick=async()=>{const o={month:$("#maMonth").value};$$("#maForm [name]").forEach(i=>o[i.name]=i.value);const r=await (await post("/api/month-actual",o)).json();toast(r.message);load()};
 }];
 
 // ---------- 計画タスク
+function monthActualForm(){
+  const ms=S.ops.months||[]; const cur=ms.find(m=>m.month===S.ops.month_index)||ms.at(-1); if(!cur) return '<div class="card empty">計画の開始前です</div>';
+  const sel=+(localGet("maMonth")||cur.month), m=ms.find(x=>x.month===sel)||cur;
+  const diff=num(m.payout_man)?m.payout_man-m.expected_payout_man:null;
+  return `<div class="card" style="padding:14px 18px"><div class="form-inline" id="maForm">
+    <label>月<select id="maMonth">${ms.map(x=>`<option value="${x.month}" ${x.month===m.month?"selected":""}>${x.month}か月目（${esc(x.label)}）</option>`).join("")}</select></label>
+    <label>固定費の実額（万円）<input name="fixed_cost_man" type="number" step="0.1" value="${m.fixed_cost_man??""}" placeholder="計画 ${m.fixed_used_man??""}"></label>
+    <label>入金総額（万円・Payoneer/Wise）<input name="payout_man" type="number" step="0.1" value="${m.payout_man??""}"></label>
+    <label>オーナー稼働（時間/月）<input name="owner_hours" type="number" step="1" value="${m.owner_hours??""}"></label>
+    <label>メモ<input name="note" class="w2"></label><button class="btn dark sm" id="maSave">保存</button></div>
+    <div class="chips" style="margin-top:8px"><span class="chip">営業利益 <b>${manFmt(m.op_profit_man)}</b>（固定費${m.fixed_is_actual?"実額":"計画値"}）</span>
+      <span class="chip">入金の照合：計算上の受取 <b>${manFmt(m.expected_payout_man)}</b> / 実際の入金 <b>${manFmt(m.payout_man)}</b>${num(diff)?` <span class="badge ${Math.abs(diff)<=Math.max(1,m.expected_payout_man*.05)?"ok":"alert"}">差 ${diff>=0?"+":""}${diff.toFixed(1)}万</span>`:""}</span>
+      <span class="chip">オーナー稼働 <b>${m.owner_hours_week!=null?m.owner_hours_week+"h/週":"—"}</b>（上限 月100h）</span></div>
+    <div class="meta">入金はまとめ払いのため月単位で照合します。差が大きい月は、手数料の実額（eBayの取引レポートCSV）や返品・返金を確認してください。</div></div>`;
+}
 function dueTasks(){
   const t=S.plan.tasks||[], lim=new Date(Date.now()+7*864e5).toISOString().slice(0,10);
   return t.filter(x=>!/完了|中止/.test(x["ステータス"]||"")&&x["期限"]&&x["期限"]<=lim);
@@ -227,12 +249,16 @@ const TOOL_TASK={
   P12:"SKU採番（YYMM-連番）と、購入→到着→検品→出品→販売→発送→着金のステータス管理",
   P13:"KPI実績・仕入れファネルの実績を自動集計し、シートに貼れる形でコピー",
   S04:"仕入れ確定時に予測利益・予測売価を自動保存（実際の仕入れ値で補正）",
-  S12:"発送時に送料・関税の実額、着金時に入金額を入力",
+  S12:"発送時に送料・関税の実額を入力。実送料はジャンルごとに3件たまると見込みに自動反映",
   S13:"返品理由・検品不合格理由をコード化して記録",
   S14:"予測利益と実現利益の差（予測利益誤差）をSKU別・全体で自動計算",
   S15:"見送り理由「商品違い」、検品不合格「商品違い」を誤照合データとして蓄積",
-  S17:"在庫・値付け画面で30/60/90日の経過と値下げ提案を表示",
-  O06:"候補に成約件数（需要）を表示し、総合スコアに反映",
+  S17:"在庫・値付け画面で30/60/90日の経過と値下げ提案を表示。90日超在庫が10%超のカテゴリは仕入れ抑制",
+  S07:"出品画面で英語タイトル・Item specifics・説明文の下書きを自動作成",
+  S10:"eBayの注文レポートCSVを取り込み、売約・発送・追跡番号をSKUへ自動反映",
+  S18:"月次実績（固定費の実額・入金総額）を入力し、営業利益と入金を照合",
+  O06:"成約日付と出品中件数から「60日以内に売れる見込み」を候補ごとに出力し、総合スコアに反映",
+  O05:"照合の✓/✗を記録して精度を実測し、✗は似た出品の比較対象から自動で外す",
   O08:"30/60/90日ルールで値下げ価格を提案（損益分岐を下回らない）",
   O11:"発送時の実送料を記録し、予測との差を集計",
 };

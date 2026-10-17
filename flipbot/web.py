@@ -15,6 +15,12 @@ POST /api/plan-sync       事業計画シートを今すぐ読み直す
 POST /api/watch           マスター（継続仕入れ）を登録・更新 {"id"?, "label", "mercari_query", ...}
 DELETE /api/watch?id=     マスターを削除
 POST /api/notify-test     通知のテスト送信
+POST /api/evaluate        メルカリの商品URLを貼って判定
+POST /api/label           照合の正誤（✓/✗）を記録
+POST /api/month-actual    月次の実績（固定費・入金総額・オーナー稼働）を記録
+POST /api/genre           ジャンルの停止・再開・追加・削除
+POST /api/ebay-import     eBayのCSV（注文・取引レポート）を取り込み {"text":..., "apply": bool}
+GET  /api/listing-draft?sku= 英語の出品下書き
 POST /api/settings        画面入力の設定値（現金残高など）{"cash_jpy": ...}
 GET  /api/queue.csv       仕入れキューを CSV で書き出し
 GET  /api/skus.csv        全SKU（在庫・取引）を CSV で書き出し
@@ -26,6 +32,7 @@ import asyncio
 import csv
 import io
 import json
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -42,7 +49,7 @@ from . import ops
 from . import plan as plan_mod
 from .config import Config, load_config
 from .interactive import ebay_login_until_ready
-from .pipeline import scan_all
+from .pipeline import active_genres, all_genres, scan_all
 from .sources import sample_targets
 
 INDEX_HTML = Path(__file__).parent / "web" / "index.html"
@@ -149,7 +156,7 @@ class AppState:
                 if not cands and not con.execute("SELECT 1 FROM scan_targets LIMIT 1").fetchone():
                     # 旧形式（scan_targets がない頃）のスキャン
                     cands = [json.loads(r["payload_json"]) for r in con.execute("SELECT payload_json FROM candidates WHERE scan_id=? ORDER BY id", (row["id"],))]
-                live_ids = {t.id for t in cfg.all_targets} | {f"m{r['id']}" for r in con.execute("SELECT id FROM watch_items WHERE active=1")}
+                live_ids = {t.id for t in active_genres(con, cfg)} | {f"m{r['id']}" for r in con.execute("SELECT id FROM watch_items WHERE active=1")}
                 if row["data_source"] != "sample":
                     cands = [c for c in cands if c.get("target_id") in live_ids]
             pause_until = db.get_setting(con, "mercari_pause_until")
@@ -173,9 +180,13 @@ class AppState:
                 for r in con.execute("SELECT * FROM purchases ORDER BY purchased_at DESC")
             ]
             watch = [dict(r) for r in con.execute("SELECT * FROM watch_items ORDER BY active DESC, id DESC")]
+            labels = {f"{r['mercari_title']}\t{r['ebay_url'] or r['ebay_title']}": r["label"] for r in con.execute("SELECT * FROM match_labels")}
+            genres_all = [{**t.model_dump(), "active": on, "custom": custom} for t, on, custom in all_genres(con, cfg)]
+            active_list = active_genres(con, cfg)
             rate, rate_src, rate_at = fx_mod.current_rate(cfg)
             cfg.fx.jpy_per_usd = round(rate, 2)
             plan = plan_mod.load(cfg)
+            from_sheet = plan_mod.apply_assumptions(cfg, plan)
             m = ops.metrics(con, cfg, plan)
         finally:
             con.close()
@@ -188,8 +199,9 @@ class AppState:
             "plan": {k: v for k, v in plan.items() if k not in ("benchmarks",)},
             "ops": m,
             "env": env,
-            "costs": cfg.costs.model_dump(),
+            "costs": {**cfg.costs.model_dump(), "from_sheet": from_sheet},
             "watch": watch,
+            "labels": labels,
             "mercari_pause": pause,
             "settings": {
                 "mercari_source": cfg.app.mercari_source,
@@ -198,6 +210,9 @@ class AppState:
                 "category_excludes": cfg.category_excludes,
                 "auto_scan_minutes": cfg.app.auto_scan_minutes,
                 "genres_per_scan": cfg.app.genres_per_scan,
+                "scan_mode": cfg.app.scan_mode,
+                "handling_days": cfg.app.handling_days,
+                "backup_dir": cfg.app.backup_dir,
             },
             "scanning": self.busy == "scan",
             "evaluating": self.busy == "evaluate",
@@ -218,10 +233,11 @@ class AppState:
                 "exclude_keywords": cfg.exclude_keywords,
                 "genres": [
                     t.model_dump()
-                    for t in (sample_targets() if summary.get("data_source") == "sample" else cfg.all_targets)
+                    for t in (sample_targets() if summary.get("data_source") == "sample" else active_list)
                 ],
                 # 戦略ページ用：サンプル表示中でも config.yaml の監視ジャンルを使う
-                "config_genres": [t.model_dump() for t in cfg.all_targets],
+                "config_genres": [g for g in genres_all if g["active"]],
+                "all_genres": genres_all,
                 "data_source": self.source or cfg.app.data_source,
             },
         }
@@ -331,6 +347,83 @@ class AppState:
         finally:
             con.close()
 
+    def save_label(self, b: dict[str, Any]) -> dict[str, Any]:
+        con = self._con()
+        try:
+            con.execute("DELETE FROM match_labels WHERE mercari_title=? AND ebay_title=? AND IFNULL(ebay_url,'')=IFNULL(?, '')",
+                        (b.get("mercari_title"), b.get("ebay_title"), b.get("ebay_url")))
+            if b.get("label") in (0, 1, "0", "1"):
+                con.execute("INSERT INTO match_labels(target_id, mercari_title, ebay_title, ebay_url, label, created_at) VALUES(?, ?, ?, ?, ?, ?)",
+                            (b.get("target_id"), b.get("mercari_title"), b.get("ebay_title"), b.get("ebay_url"), int(b["label"]), db.utc_now_iso()))
+            con.commit()
+            return {"ok": True, "message": "記録しました（✗は次のスキャンから比較対象を外します）" if str(b.get("label")) == "0" else "記録しました"}
+        finally:
+            con.close()
+
+    def save_month_actual(self, b: dict[str, Any]) -> dict[str, Any]:
+        def num(v):
+            return float(v) if v not in (None, "") else None
+        con = self._con()
+        try:
+            con.execute(
+                "INSERT INTO month_actuals(month, fixed_cost_man, payout_man, owner_hours, note, updated_at) VALUES(?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(month) DO UPDATE SET fixed_cost_man=excluded.fixed_cost_man, payout_man=excluded.payout_man, "
+                "owner_hours=excluded.owner_hours, note=excluded.note, updated_at=excluded.updated_at",
+                (int(b["month"]), num(b.get("fixed_cost_man")), num(b.get("payout_man")), num(b.get("owner_hours")), b.get("note"), db.utc_now_iso()))
+            con.commit()
+            return {"ok": True, "message": "月次の実績を保存しました"}
+        finally:
+            con.close()
+
+    def save_genre(self, b: dict[str, Any]) -> dict[str, Any]:
+        from .config import Target
+
+        con = self._con()
+        try:
+            if b.get("delete"):
+                con.execute("DELETE FROM genre_overrides WHERE target_id=? AND custom_json IS NOT NULL", (b["id"],))
+            elif b.get("custom"):
+                c = dict(b["custom"])
+                c.setdefault("id", "u-" + re.sub(r"[^a-z0-9]+", "-", (c.get("ebay_query") or c.get("name") or "genre").lower()).strip("-")[:40])
+                for k in ("shipping_cost_jpy", "min_profit_jpy", "max_buy_jpy"):
+                    if c.get(k) in ("", None):
+                        c.pop(k, None)
+                t = Target.model_validate(c)
+                con.execute("INSERT INTO genre_overrides(target_id, active, custom_json, updated_at) VALUES(?, 1, ?, ?) "
+                            "ON CONFLICT(target_id) DO UPDATE SET custom_json=excluded.custom_json, updated_at=excluded.updated_at",
+                            (t.id, t.model_dump_json(), db.utc_now_iso()))
+            else:
+                con.execute("INSERT INTO genre_overrides(target_id, active, updated_at) VALUES(?, ?, ?) "
+                            "ON CONFLICT(target_id) DO UPDATE SET active=excluded.active, updated_at=excluded.updated_at",
+                            (b["id"], 1 if b.get("active") else 0, db.utc_now_iso()))
+            con.commit()
+            return {"ok": True, "message": "ジャンル設定を保存しました（次のスキャンから反映）"}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "message": f"保存できませんでした: {e}"}
+        finally:
+            con.close()
+
+    def ebay_import(self, text: str, do_apply: bool) -> dict[str, Any]:
+        from . import ebay_import as ei
+
+        cfg = self.cfg
+        cfg.fx.jpy_per_usd = round(fx_mod.current_rate(cfg)[0], 2)
+        con = self._con()
+        try:
+            return ei.apply(con, text) if do_apply else ei.plan_updates(con, text)
+        finally:
+            con.close()
+
+    def listing_draft(self, sku: str) -> dict[str, Any]:
+        from .listing import draft
+
+        con = self._con()
+        try:
+            r = con.execute("SELECT * FROM skus WHERE sku=?", (sku,)).fetchone()
+            return draft(dict(r)) if r else {"error": "SKUが見つかりません"}
+        finally:
+            con.close()
+
     def set_setting(self, key: str, value: Any) -> None:
         con = self._con()
         try:
@@ -349,8 +442,7 @@ class AppState:
         k = next((x for x in plan.get("kpi_plan", []) if int(x.get("月", 0) or 0) == idx), {})
         pm = next((x for x in plan.get("monthly", []) if int(x.get("月", 0) or 0) == idx), {})
         ind = o["indicators"]
-        fixed = pm.get("固定費(万円)") or 0
-        op = round(a["contribution_man"] - fixed, 1) if a.get("contribution_man") is not None else ""
+        op = a.get("op_profit_man", "")
         def diff(x, y):
             return round(x - y, 1) if isinstance(x, (int, float)) and isinstance(y, (int, float)) else ""
         pct = lambda v: f"{v*100:.1f}%" if isinstance(v, (int, float)) else ""  # noqa: E731
@@ -443,6 +535,8 @@ def _make_handler(state: AppState):
                     "text/csv; charset=utf-8",
                     {"Content-Disposition": f'attachment; filename="{kind}.csv"'},
                 )
+            elif path == "/api/listing-draft":
+                self._json(state.listing_draft((parse_qs(urlparse(self.path).query).get("sku") or [""])[0]))
             elif path == "/api/kpi.tsv":
                 q = parse_qs(urlparse(self.path).query)
                 month = int(q["month"][0]) if q.get("month") else None
@@ -478,6 +572,14 @@ def _make_handler(state: AppState):
             elif path == "/api/watch":
                 ok, msg = state.save_watch(body)
                 self._json({"ok": ok, "message": msg}, 200 if ok else 400)
+            elif path == "/api/label":
+                self._json(state.save_label(body))
+            elif path == "/api/month-actual":
+                self._json(state.save_month_actual(body))
+            elif path == "/api/genre":
+                self._json(state.save_genre(body))
+            elif path == "/api/ebay-import":
+                self._json(state.ebay_import(str(body.get("text", "")), bool(body.get("apply"))))
             elif path == "/api/evaluate":
                 self._json(state.evaluate(str(body.get("url", "")).strip(), body.get("target_id")))
             elif path == "/api/notify-test":
@@ -513,6 +615,26 @@ def _make_handler(state: AppState):
     return Handler
 
 
+def _daily_tasks(state: "AppState") -> None:
+    """1日1回の作業: DBのバックアップと、外部環境の再確認期限のチェック。"""
+    from . import backup
+    from .notify import check_environment_reviews
+
+    cfg = state.cfg
+    try:
+        backup.run(cfg)
+    except Exception as e:  # noqa: BLE001
+        state.last_error = f"バックアップに失敗しました: {e!r}"
+    try:
+        con = state._con()
+        try:
+            check_environment_reviews(cfg, con, yaml.safe_load(ENV_YAML.read_text(encoding="utf-8")))
+        finally:
+            con.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _auto_scan_loop(state: "AppState", interval: int) -> None:
     """一定間隔で自動スキャン。間隔は毎回±揺らぐ。スキャン中・eBayログイン中なら次の回に回す。"""
     import random
@@ -528,6 +650,7 @@ def _auto_scan_loop(state: "AppState", interval: int) -> None:
         if not state.start_scan():
             state.next_scan_at = time.time() + 60  # 使用中なら1分後に再挑戦
             continue
+        _daily_tasks(state)  # バックアップは日付ごとに1回だけ作られる
         state.next_scan_at = nxt()
 
 
@@ -536,6 +659,7 @@ def serve(cfg_path: str, *, source: Optional[str] = None, port: Optional[int] = 
     state = AppState(cfg_path, source)
     cfg = state.cfg
     host, port = cfg.app.web_host, port or cfg.app.web_port
+    _daily_tasks(state)
     if initial_scan:
         state.start_scan()
     interval = int(cfg.app.auto_scan_minutes) * 60

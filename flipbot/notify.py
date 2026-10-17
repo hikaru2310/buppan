@@ -92,3 +92,38 @@ def send_test(cfg: Config) -> tuple[bool, str]:
         return True, "テスト通知を送りました"
     except Exception as e:  # noqa: BLE001
         return False, f"送信に失敗しました: {e}"
+
+
+def alert_once(cfg: Config, con, key: str, text: str, *, every_hours: float = 24) -> bool:
+    """運用アラート（ログイン切れ・取得停止・再確認期限など）。同じ key は every_hours に1回だけ送る。"""
+    from datetime import datetime, timedelta, timezone
+
+    row = con.execute("SELECT sent_at FROM alerts_sent WHERE key=?", (key,)).fetchone()
+    if row and datetime.fromisoformat(row["sent_at"]) > datetime.now(timezone.utc) - timedelta(hours=every_hours):
+        return False
+    n = get_notifier(cfg)
+    if n is None:
+        return False
+    try:
+        n.send(text)
+    except Exception:  # noqa: BLE001 - アラート失敗で本処理は止めない
+        return False
+    con.execute("INSERT INTO alerts_sent(key, sent_at) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET sent_at=excluded.sent_at",
+                (key, db.utc_now_iso()))
+    con.commit()
+    return True
+
+
+def check_environment_reviews(cfg: Config, con, env: dict) -> int:
+    """外部環境の再確認期限が過ぎた項目を通知（項目ごとに7日に1回）。"""
+    from datetime import date
+
+    today = date.today().isoformat()
+    n = 0
+    for area in (env or {}).get("areas", []):
+        for it in area.get("items", []):
+            if it.get("review_by") and it["review_by"] <= today:
+                n += alert_once(cfg, con, f"env:{it.get('title')}",
+                                f"🗓 外部環境の再確認期限が過ぎています：{it.get('title')}（期限 {it['review_by']}）。事実が変わっていないか確認し、environment.yaml を更新してください。",
+                                every_hours=24 * 7)
+    return n

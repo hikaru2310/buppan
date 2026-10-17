@@ -140,3 +140,30 @@ def category_min_profit(plan: dict[str, Any], category: Optional[str]) -> Option
         if category and c.get("カテゴリ") == category and isinstance(c.get("貢献利益下限"), (int, float)):
             return int(c["貢献利益下限"])
     return None
+
+
+def category_row(plan: dict[str, Any], category: Optional[str]) -> dict[str, Any]:
+    return next((c for c in plan.get("categories", []) if category and c.get("カテゴリ") == category), {})
+
+
+def apply_assumptions(cfg: Config, plan: dict[str, Any]) -> list[str]:
+    """計画シート「前提条件」に該当する行があれば、その基準値で config の前提を上書きする（数値の正本はシート）。
+    対応する項目名の例: 「米国の買い手比率」「米国関税率」「為替（円/ドル）」。"""
+    applied: list[str] = []
+    for r in plan.get("assumptions", []) or []:
+        name = str(r.get("項目") or "")
+        v = r.get("基準（主計画）")
+        if not isinstance(v, (int, float)):
+            continue
+        unit = str(r.get("単位") or "")
+        rate = v / 100 if ("%" in unit or v > 1) else v
+        if "米国" in name and ("比率" in name or "割合" in name):
+            cfg.costs.us_buyer_share = rate
+            applied.append(f"米国の買い手比率={rate:.0%}")
+        elif "関税" in name:
+            cfg.costs.us_duty_rate = rate
+            applied.append(f"米国関税率={rate:.1%}")
+        elif "為替" in name and 50 < v < 400 and not cfg.fx.auto:
+            cfg.fx.jpy_per_usd = float(v)
+            applied.append(f"為替={v}円/ドル")
+    return applied

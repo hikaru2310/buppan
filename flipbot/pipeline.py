@@ -17,10 +17,18 @@ from .config import Config, Target
 from .http import close_session, open_page
 from . import fx as fx_mod
 from . import plan as plan_mod
+from .market import demand, select_comps
 from .matching import find_comps, market_price
 from .profit import ProfitEstimate, estimate_profit
 from .sources import sample_items, sample_targets
-from .scrape_ebay import EbaySold, build_ebay_research_url, build_ebay_sold_url, parse_ebay_sold_html
+from .scrape_ebay import (
+    EbaySold,
+    build_ebay_active_url,
+    build_ebay_research_url,
+    build_ebay_sold_url,
+    parse_ebay_sold_html,
+    parse_result_count,
+)
 from .scrape_mercari import (
     MercariListing,
     build_mercari_keyword_url,
@@ -76,12 +84,12 @@ def detect_block(source: str, html: str, page_url: str = "") -> Optional[str]:
     return None
 
 
-def _cached_ebay(con, target: Target, max_age_hours: float) -> Optional[tuple[str, list[EbaySold]]]:
+def _cached_ebay(con, target: Target, max_age_hours: float) -> Optional[tuple[str, list[EbaySold], Optional[int]]]:
     """直近の eBay 成約データが新しければ再利用（Sold相場は数時間で大きく変わらない）。"""
     if max_age_hours <= 0:
         return None
     row = con.execute(
-        "SELECT s.id, s.captured_at FROM snapshots s WHERE s.target_id=? AND s.source='ebay' "
+        "SELECT s.id, s.captured_at, s.meta_json FROM snapshots s WHERE s.target_id=? AND s.source='ebay' "
         "AND EXISTS (SELECT 1 FROM ebay_sold e WHERE e.snapshot_id=s.id) ORDER BY s.id DESC LIMIT 1",
         (target.id,),
     ).fetchone()
@@ -91,10 +99,15 @@ def _cached_ebay(con, target: Target, max_age_hours: float) -> Optional[tuple[st
     if age > timedelta(hours=max_age_hours):
         return None
     items = [
-        EbaySold(title=r["title"], price_usd=r["price_usd"], shipping_usd=r["shipping_usd"], total_usd=r["total_usd"], url=r["url"])
+        EbaySold(title=r["title"], price_usd=r["price_usd"], shipping_usd=r["shipping_usd"], total_usd=r["total_usd"], url=r["url"],
+                 condition=r["condition"], sold_date=r["sold_date"])
         for r in con.execute("SELECT * FROM ebay_sold WHERE snapshot_id=?", (row["id"],))
     ]
-    return row["captured_at"], items
+    try:
+        active = json.loads(row["meta_json"] or "{}").get("active_count")
+    except ValueError:
+        active = None
+    return row["captured_at"], items, active
 
 
 def _save_debug(name: str, html: str) -> None:
@@ -148,6 +161,53 @@ class LazySession:
 def excludes_for(cfg: Config, target: Target) -> list[str]:
     """除外語の3階層（全体 ＋ カテゴリ ＋ ジャンル）。0001_sedori の設計を踏襲。"""
     return [*cfg.exclude_keywords, *cfg.category_excludes.get(target.category or "", []), *target.exclude_keywords]
+
+
+def all_genres(con, cfg: Config) -> list[tuple[Target, bool, bool]]:
+    """(ジャンル, 有効か, 画面で追加したものか)。config.yaml のジャンル＋画面で追加したジャンル。"""
+    ov = {r["target_id"]: r for r in con.execute("SELECT * FROM genre_overrides")}
+    out = [(t, bool(ov[t.id]["active"]) if t.id in ov else True, False) for t in cfg.all_targets]
+    for tid, r in ov.items():
+        if r["custom_json"] and tid not in {t.id for t in cfg.all_targets}:
+            try:
+                out.append((Target.model_validate(json.loads(r["custom_json"])), bool(r["active"]), True))
+            except ValueError:
+                continue
+    return out
+
+
+def active_genres(con, cfg: Config) -> list[Target]:
+    return [t for t, on, _ in all_genres(con, cfg) if on]
+
+
+class Learned:
+    """照合で「別物」と判定した組み合わせ。判定した出品と似たタイトル（一致0.8以上）の出品にだけ効かせる。"""
+
+    def __init__(self, con, target_id: str) -> None:
+        self.bad: dict[str, list[str]] = {}
+        for r in con.execute("SELECT ebay_url, ebay_title, mercari_title FROM match_labels WHERE label=0 AND target_id=?", (target_id,)):
+            self.bad.setdefault(r["ebay_url"] or r["ebay_title"], []).append(r["mercari_title"])
+
+    def filter(self, mercari_title: str, comps: list) -> list:
+        if not self.bad:
+            return comps
+        from .matching import match_score
+
+        def is_bad(c) -> bool:
+            titles = self.bad.get(c.item.url) or self.bad.get(c.item.title) or []
+            return any(t == mercari_title or match_score(t, mercari_title) >= 0.8 for t in titles)
+
+        return [c for c in comps if not is_bad(c)]
+
+
+def learned_shipping(con, cfg: Config) -> dict[str, int]:
+    """ジャンル（表示名）→ 実送料の中央値。件数が learn_min_n 以上のものだけ。"""
+    if not cfg.costs.learn_shipping:
+        return {}
+    vals: dict[str, list[int]] = {}
+    for r in con.execute("SELECT genre, shipping_cost_jpy FROM skus WHERE shipping_cost_jpy IS NOT NULL AND genre IS NOT NULL"):
+        vals.setdefault(r["genre"], []).append(r["shipping_cost_jpy"])
+    return {g: sorted(v)[len(v) // 2] for g, v in vals.items() if len(v) >= cfg.costs.learn_min_n}
 
 
 def master_targets(con) -> list[Target]:
@@ -231,8 +291,9 @@ async def crawl_target_once(cfg: Config, target: Target, session=None, *, fetch_
         ebay_url = build_ebay_sold_url(target.ebay_query)
         ebay_block: Optional[str] = None
         cached = _cached_ebay(con, target, cfg.app.ebay_cache_hours)
+        active_count: Optional[int] = None
         if cached:
-            ebay_cached_at, ebay_items = cached
+            ebay_cached_at, ebay_items, active_count = cached
         elif not fetch_ebay:
             # 既にブロックされているので、同じスキャン中は eBay に繰り返しアクセスしない
             ebay_cached_at, ebay_items = None, []
@@ -247,20 +308,27 @@ async def crawl_target_once(cfg: Config, target: Target, session=None, *, fetch_
             if len(ebay_items) == 0:
                 _save_debug(f"ebay_{target.id}", ebay_html)
             else:
+                # 出品中（競合）の件数：消化率・売れるまでの日数の推定に使う（成約データと一緒に12時間キャッシュ）
+                try:
+                    active_html = await fetch_html(session.page, build_ebay_active_url(target.ebay_query))
+                    active_count = parse_result_count(active_html)
+                except PlaywrightError:
+                    active_count = None
                 ebay_snap = db.create_snapshot(
                     con, target_id=target.id, source="ebay",
-                    meta_json=json.dumps({"url": ebay_url}, ensure_ascii=False),
+                    meta_json=json.dumps({"url": ebay_url, "active_count": active_count}, ensure_ascii=False),
                 )
                 con.executemany(
-                    "INSERT INTO ebay_sold(snapshot_id, title, price_usd, shipping_usd, total_usd, url, ended_at) "
-                    "VALUES(?, ?, ?, ?, ?, ?, ?)",
-                    [(ebay_snap.id, it.title, it.price_usd, it.shipping_usd, it.total_usd, it.url, None) for it in ebay_items],
+                    "INSERT INTO ebay_sold(snapshot_id, title, price_usd, shipping_usd, total_usd, url, ended_at, condition, sold_date) "
+                    "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [(ebay_snap.id, it.title, it.price_usd, it.shipping_usd, it.total_usd, it.url, None, it.condition, it.sold_date) for it in ebay_items],
                 )
                 con.commit()
 
         return {
             "mercari": {"url": mercari_url, "count": len(mercari_items), "block_reason": mercari_block},
-            "ebay": {"url": ebay_url, "count": len(ebay_items), "block_reason": ebay_block, "cached_at": ebay_cached_at},
+            "ebay": {"url": ebay_url, "count": len(ebay_items), "block_reason": ebay_block, "cached_at": ebay_cached_at,
+                     "active_count": active_count},
             "mercari_items": mercari_items,
             "ebay_items": ebay_items,
         }
@@ -297,6 +365,10 @@ class Candidate:
     listed_at: Optional[str] = None
     demand_count: int = 0  # eBayで同じ検索語で売れた件数（需要）
     is_master: bool = False
+    demand: Optional[dict[str, Any]] = None  # 月間成約・出品中・消化率・売れるまでの日数・60日以内の見込み
+    comp_note: Optional[str] = None  # 比較対象の状態のそろえ方
+    plan_sell60: Optional[float] = None  # 計画シートのカテゴリ別「60日以内販売率」
+    limit_price_jpy: Optional[int] = None  # 指値：下限利益を確保できる仕入れ値の上限
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self.est)
@@ -323,6 +395,10 @@ class Candidate:
             listed_at=self.listed_at,
             demand_count=self.demand_count,
             is_master=self.is_master,
+            demand=self.demand,
+            comp_note=self.comp_note,
+            plan_sell60=self.plan_sell60,
+            limit_price_jpy=self.limit_price_jpy,
         )
         return d
 
@@ -345,7 +421,10 @@ SORT_KEYS = {
     "profit": lambda c: (c.est.profit_jpy, c.est.roi),
     # 総合: 貢献利益額 × マッチ信頼度 × 需要（成約件数。5件以上で満点）
     #   意思決定ログ 2026-07-21「ROIだけでなく利益額・売却確率・在庫日数を重視」
-    "score": lambda c: (max(c.est.profit_jpy, 0) * c.match_score * min(1.0, c.comps_count / 5), c.est.profit_jpy),
+    #   需要は「60日以内に売れる見込み」があればそれを、なければ成約件数（5件で満点）を使う
+    "score": lambda c: (max(c.est.profit_jpy, 0) * c.match_score
+                        * ((c.demand or {}).get("sell60") if (c.demand or {}).get("sell60") is not None else min(1.0, c.comps_count / 5)),
+                        c.est.profit_jpy),
 }
 
 
@@ -372,8 +451,12 @@ def rank_target(
     ebay_items: list[EbaySold],
     con,
     plan: Optional[dict[str, Any]] = None,
+    active_count: Optional[int] = None,
 ) -> tuple[list[Candidate], RankStats]:
     th = cfg.thresholds
+    learned = Learned(con, target.id)
+    dem = demand(ebay_items, active_count)
+    plan_sell60 = plan_mod.category_row(plan or {}, target.category).get("60日以内販売率")
     # 下限: ジャンル個別 → 計画シートのカテゴリ別「貢献利益下限」 → 全体設定
     cat_min = plan_mod.category_min_profit(plan or {}, target.category)
     min_profit = target.min_profit_jpy if target.min_profit_jpy is not None else cat_min if cat_min is not None else th.min_profit_jpy
@@ -408,7 +491,8 @@ def rank_target(
         if low_demand:
             stats.low_demand += 1
             continue
-        comps = find_comps(it.title, ebay_items, title_of=lambda e: e.title, threshold=th.match_threshold)
+        comps = learned.filter(it.title, find_comps(it.title, ebay_items, title_of=lambda e: e.title, threshold=th.match_threshold))
+        comps, comp_note = select_comps(comps, it.condition_id, th.min_comps)
         market = market_price([c.item.total_usd for c in comps], min_samples=th.min_comps)
         if market is None:
             stats.no_comp += 1
@@ -461,6 +545,10 @@ def rank_target(
                 listed_at=it.listed_at,
                 demand_count=len(ebay_items),
                 is_master=target.is_master,
+                demand=dem,
+                comp_note=comp_note,
+                plan_sell60=plan_sell60,
+                limit_price_jpy=max(est.breakeven_buy_jpy - min_profit, 0),
             )
         )
     con.commit()
@@ -469,12 +557,14 @@ def rank_target(
 
 def select_targets(con, cfg: Config, *, rotate: bool) -> list[Target]:
     """今回取得するジャンル。設定ジャンルは genres_per_scan 件ずつ順番に回し、マスターは毎回入れる。"""
-    genres = cfg.all_targets
+    if cfg.app.scan_mode == "masters_only":
+        return master_targets(con)
+    genres = active_genres(con, cfg)
     n = cfg.app.genres_per_scan
     if rotate and n and len(genres) > n:
         start = int(db.get_setting(con, "rotation_index", "0") or 0) % len(genres)
         genres = [genres[(start + i) % len(genres)] for i in range(n)]
-        db.set_setting(con, "rotation_index", (start + n) % len(cfg.all_targets))
+        db.set_setting(con, "rotation_index", (start + n) % len(active_genres(con, cfg)))
         con.commit()
     return [*genres, *master_targets(con)]
 
@@ -506,18 +596,6 @@ def _jst(iso: str) -> str:
         return iso
 
 
-def _alert(cfg: Config, text: str) -> None:
-    """運用アラート（取得停止など）を通知。失敗しても無視。"""
-    from .notify import get_notifier
-
-    n = get_notifier(cfg)
-    if n:
-        try:
-            n.send(text)
-        except Exception:  # noqa: BLE001
-            pass
-
-
 async def scan_all(
     cfg: Config,
     *,
@@ -530,11 +608,13 @@ async def scan_all(
     source = (data_source or cfg.app.data_source).lower()
     fx_mod.apply(cfg)
     plan = plan_mod.load(cfg)
+    from_sheet = plan_mod.apply_assumptions(cfg, plan)
     con = db.connect(cfg.app.db_path)
     db.migrate(con)
     started = db.utc_now_iso()
     notes: list[dict[str, Any]] = []
     collected: list[tuple[Target, list[MercariListing], list[EbaySold]]] = []
+    actives: dict[str, Optional[int]] = {}
 
     targets = select_targets(con, cfg, rotate=rotate)
     paused_until = db.get_setting(con, "mercari_pause_until")
@@ -561,14 +641,23 @@ async def scan_all(
                         notes.append({"target": t.name, "level": "warn", "message": f"{src}: {res[src]['block_reason']}"})
                 eb = res["ebay"].get("block_reason") or ""
                 if "ログイン" in eb or "拒否" in eb or "captcha" in eb:
+                    if ebay_ok:
+                        from .notify import alert_once
+
+                        alert_once(cfg, con, "ebay_login",
+                                   "🔑 eBayの相場を取得できません（ログイン切れ・アクセス拒否）。ツールのダッシュボードの「eBayにログインする」からログインしてください。",
+                                   every_hours=12)
                     ebay_ok = False
                 collected.append((t, res["mercari_items"], res["ebay_items"]))
+                actives[t.id] = res["ebay"].get("active_count")
                 if lazy.mercari_anomaly:
                     # 止められている兆候：残りのジャンルは取得せず、一定時間メルカリへのアクセスを止める
                     until = _pause_mercari(con, cfg, lazy.mercari_anomaly)
                     notes.append({"target": "メルカリ", "level": "error",
                                   "message": f"{lazy.mercari_anomaly}。{_jst(until)} まで取得を自動で止めます"})
-                    _alert(cfg, f"⚠️ メルカリの取得を一時停止しました：{lazy.mercari_anomaly}（{_jst(until)} まで）")
+                    from .notify import alert_once
+
+                    alert_once(cfg, con, "mercari_pause", f"⚠️ メルカリの取得を一時停止しました：{lazy.mercari_anomaly}（{_jst(until)} まで）", every_hours=1)
                     break
             else:
                 if collected:
@@ -592,10 +681,14 @@ async def scan_all(
     all_cands: list[Candidate] = []
     total = RankStats()
     mercari_count = ebay_count = 0
+    learned_ship = learned_shipping(con, cfg)
     for t, m_items, e_items in collected:
+        if t.genre_label in learned_ship:
+            t.shipping_cost_jpy = learned_ship[t.genre_label]
         mercari_count += len(m_items)
         ebay_count += len(e_items)
-        cands, st = rank_target(cfg=cfg, target=t, mercari_items=m_items, ebay_items=e_items, con=con, plan=plan)
+        cands, st = rank_target(cfg=cfg, target=t, mercari_items=m_items, ebay_items=e_items, con=con, plan=plan,
+                                active_count=actives.get(t.id))
         all_cands.extend(cands)
         for k in asdict(st):
             setattr(total, k, getattr(total, k) + getattr(st, k))
@@ -614,6 +707,8 @@ async def scan_all(
         "jpy_per_usd": cfg.fx.jpy_per_usd,
         "min_profit_jpy": cfg.thresholds.min_profit_jpy,
         "min_roi": cfg.thresholds.min_roi,
+        "assumptions_from_sheet": from_sheet,
+        "learned_shipping": learned_ship,
     }
     cur = con.execute(
         "INSERT INTO scans(started_at, finished_at, data_source, summary_json) VALUES(?, ?, ?, ?)",
@@ -707,7 +802,7 @@ def _best_target(cfg: Config, con, title: str) -> tuple[Optional[Target], float]
     from .matching import match_score
 
     best, score = None, 0.0
-    for t in [*cfg.all_targets, *master_targets(con)]:
+    for t in [*active_genres(con, cfg), *master_targets(con)]:
         sc = max(match_score(title, t.ebay_query), match_score(title, t.name))
         if sc > score:
             best, score = t, sc
@@ -720,6 +815,7 @@ async def evaluate_url(cfg: Config, url: str, *, target_id: Optional[str] = None
         return {"ok": False, "message": "メルカリの商品URL（https://jp.mercari.com/item/... または /shops/product/...）を貼ってください"}
     fx_mod.apply(cfg)
     plan = plan_mod.load(cfg)
+    plan_mod.apply_assumptions(cfg, plan)
     con = db.connect(cfg.app.db_path)
     db.migrate(con)
     lazy = LazySession(cfg)
@@ -729,7 +825,7 @@ async def evaluate_url(cfg: Config, url: str, *, target_id: Optional[str] = None
         it = parse_mercari_item_html(html, url)
         if not it:
             return {"ok": False, "message": f"商品ページを読めませんでした（HTTP {status}）。URLを確認してください"}
-        targets = {t.id: t for t in [*cfg.all_targets, *master_targets(con)]}
+        targets = {t.id: t for t in [*active_genres(con, cfg), *master_targets(con)]}
         target = targets.get(target_id or "")
         fit = 1.0
         if target is None:
@@ -739,16 +835,19 @@ async def evaluate_url(cfg: Config, url: str, *, target_id: Optional[str] = None
                     "message": "どのジャンルの商品か判定できませんでした。ジャンルを選んで再判定してください"}
         # 相場：そのジャンルの成約データ（キャッシュがあれば使う。古くても使い、取得日を表示）
         cached = _cached_ebay(con, target, 24 * 30)
-        ebay_items, ebay_at, note = [], None, None
+        ebay_items, ebay_at, note, active_count = [], None, None, None
         if cached:
-            ebay_at, ebay_items = cached
+            ebay_at, ebay_items, active_count = cached
         else:
             html_e, _ = await fetch_html_status(session.page, build_ebay_sold_url(target.ebay_query))
             ebay_items = parse_ebay_sold_html(html_e, cfg.fx.jpy_per_usd)
             note = detect_block("ebay", html_e, session.page.url) if not ebay_items else None
         th = cfg.thresholds
-        comps = find_comps(it.title, ebay_items, title_of=lambda e: e.title, threshold=th.match_threshold)
+        comps = Learned(con, target.id).filter(it.title, find_comps(it.title, ebay_items, title_of=lambda e: e.title, threshold=th.match_threshold))
+        comps, comp_note = select_comps(comps, it.condition_id, th.min_comps)
         market = market_price([c.item.total_usd for c in comps], min_samples=1)
+        dem = demand(ebay_items, active_count)
+        plan_sell60 = plan_mod.category_row(plan or {}, target.category).get("60日以内販売率")
         reasons: list[str] = []
         if it.status != "on_sale":
             reasons.append("売り切れています")
@@ -782,7 +881,11 @@ async def evaluate_url(cfg: Config, url: str, *, target_id: Optional[str] = None
             ebay_research_url=build_ebay_research_url(target.ebay_query), mercari_similar_url=build_mercari_keyword_url(target.mercari_query),
             near_miss=bool(reasons), condition=CONDITION_LABELS.get(it.condition_id) if it.condition_id else None,
             is_shop=it.is_shop, demand_count=len(ebay_items), is_master=target.is_master,
+            demand=dem, comp_note=comp_note, plan_sell60=plan_sell60, limit_price_jpy=max(est.breakeven_buy_jpy - min_profit, 0),
         )
+        if dem.get("sell60") is not None and plan_sell60 and dem["sell60"] < plan_sell60:
+            reasons.append(f"60日以内に売れる見込み {dem['sell60']:.0%} が計画 {plan_sell60:.0%} を下回る（回転リスク）")
+            cand.near_miss = True
         d = cand.to_dict()
         # 「キューへ」「マスター登録」が使えるよう、手動判定のスキャンとして保存
         now = db.utc_now_iso()

@@ -75,7 +75,21 @@ eBayの「売れた商品（Sold）」検索はログインが必要です。画
 
 Slack通知は `config.local.yaml` に `notify: {slack_webhook_url: "https://hooks.slack.com/services/..."}` を書くと有効になります（「ルール・前提」画面からテスト送信できます）。
 
-照合精度の回帰テスト: `.venv/bin/python tests/test_matching.py`
+### eBayとのやり取りを減らす
+
+- 出品時に、eBayの「カスタムラベル（SKU）」へツールのSKU（例 `2610-001`）を入れてください。
+- Seller Hub の注文レポート／取引レポート（CSV）を「着金・精算」画面で取り込むと、売約・発送・追跡番号・手数料の実額がSKUに自動で反映されます。
+- 出品画面の「英語の出品下書きを作る」で、タイトル・Item specifics・説明文の下書きをコピーできます。
+
+### テスト
+
+```bash
+.venv/bin/python tests/test_core.py
+```
+
+```bash
+.venv/bin/python tests/test_matching.py
+```
 
 外部環境の分析・工程別の改善計画・シートとの役割分担は [docs/business-flow-improvements.md](docs/business-flow-improvements.md) を参照。
 

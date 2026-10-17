@@ -200,9 +200,45 @@ def migrate(con: sqlite3.Connection) -> None:
           actual_buy_jpy INTEGER NOT NULL,
           payload_json TEXT NOT NULL
         );
+
+        -- 照合の正誤ラベル（候補の内訳で ✓/✗ を付ける）→ 照合精度の実測と、誤マッチの学習に使う
+        CREATE TABLE IF NOT EXISTS match_labels (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          target_id TEXT,
+          mercari_title TEXT NOT NULL,
+          ebay_title TEXT NOT NULL,
+          ebay_url TEXT,
+          label INTEGER NOT NULL,        -- 1=同じ商品 / 0=別物
+          created_at TEXT NOT NULL
+        );
+
+        -- 月次の実績入力（固定費の実額・入金の照合・オーナー稼働）
+        CREATE TABLE IF NOT EXISTS month_actuals (
+          month INTEGER PRIMARY KEY,     -- 計画の何か月目か
+          fixed_cost_man REAL,           -- 固定費の実額（万円）
+          payout_man REAL,               -- その月にPayoneer/Wiseから円で入った額（万円）
+          owner_hours REAL,              -- オーナー稼働（時間/月）
+          note TEXT,
+          updated_at TEXT
+        );
+
+        -- 運用アラートの送信履歴（同じアラートを何度も送らない）
+        CREATE TABLE IF NOT EXISTS alerts_sent (
+          key TEXT PRIMARY KEY,
+          sent_at TEXT NOT NULL
+        );
+
+        -- 画面から追加・停止したジャンル（config.yaml のジャンルの上書き）
+        CREATE TABLE IF NOT EXISTS genre_overrides (
+          target_id TEXT PRIMARY KEY,
+          active INTEGER NOT NULL DEFAULT 1,
+          custom_json TEXT,              -- 画面で追加したジャンルの定義（config にないもの）
+          updated_at TEXT
+        );
         """
     )
     con.commit()
+    ensure_columns(con)
 
 
 def upsert_target(con: sqlite3.Connection, target_id: str, name: str) -> None:
@@ -260,6 +296,23 @@ def baseline_seen_at(con: sqlite3.Connection, target_id: str) -> Optional[str]:
     """このジャンルを初めてスキャンした時刻（それ以前からある出品は NEW 扱いしない）。"""
     row = con.execute("SELECT MIN(first_seen) AS t FROM seen_items WHERE target_id=?", (target_id,)).fetchone()
     return row["t"] if row and row["t"] else None
+
+
+# 既存DBに後から列を足す（テーブルは CREATE IF NOT EXISTS で作られるが、列追加はこれで行う）
+_COLUMNS: dict[str, dict[str, str]] = {
+    "ebay_sold": {"condition": "TEXT", "sold_date": "TEXT"},
+    "skus": {"return_loss_jpy": "INTEGER", "ebay_order_id": "TEXT", "fees_usd": "REAL", "ebay_title": "TEXT"},
+    "snapshots": {},
+}
+
+
+def ensure_columns(con: sqlite3.Connection) -> None:
+    for table, cols in _COLUMNS.items():
+        have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+        for c, typ in cols.items():
+            if c not in have:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN {c} {typ}")
+    con.commit()
 
 
 def log_event(con: sqlite3.Connection, kind: str, ref: str) -> None:

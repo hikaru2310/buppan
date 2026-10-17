@@ -27,6 +27,47 @@ class EbaySold:
     shipping_usd: Optional[float]
     total_usd: float
     url: str
+    condition: Optional[str] = None  # new / used / parts
+    sold_date: Optional[str] = None  # YYYY-MM-DD
+
+
+_MONTHS = {m: i for i, m in enumerate(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
+_SOLD_EN = re.compile(r"Sold\s+([A-Z][a-z]{2})\s+(\d{1,2}),?\s+(\d{4})")
+_SOLD_JA = re.compile(r"(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日")
+_COND = [  # 表示文言 → 区分（長いものから判定）
+    ("for parts or not working", "parts"), ("parts only", "parts"), ("ジャンク", "parts"), ("部品取り", "parts"),
+    ("brand new", "new"), ("new (other)", "new"), ("new other", "new"), ("open box", "new"), ("新品", "new"), ("未使用", "new"),
+    ("pre-owned", "used"), ("used", "used"), ("refurbished", "used"), ("中古", "used"),
+]
+
+
+def _sold_date(text: str) -> Optional[str]:
+    m = _SOLD_EN.search(text)
+    if m and m.group(1) in _MONTHS:
+        return f"{int(m.group(3)):04d}-{_MONTHS[m.group(1)]:02d}-{int(m.group(2)):02d}"
+    m = _SOLD_JA.search(text)
+    if m:
+        return f"{int(m.group(1)):04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+    return None
+
+
+def _condition(text: str) -> Optional[str]:
+    t = text.lower()
+    for k, v in _COND:
+        if k in t:
+            return v
+    return None
+
+
+_COUNT_RE = re.compile(r"([0-9][0-9,]*)\+?\s*(?:results|件)")
+
+
+def parse_result_count(html: str) -> Optional[int]:
+    """検索結果の総件数（出品中の競合数）。"""
+    soup = BeautifulSoup(html, "lxml")
+    el = soup.select_one(".srp-controls__count-heading, .srp-controls__count, h1.srp-controls__count-heading")
+    m = _COUNT_RE.search(el.get_text(" ", strip=True) if el else soup.get_text(" ", strip=True)[:5000])
+    return int(m.group(1).replace(",", "")) if m else None
 
 
 # eBay price strings vary: "US $12.34", "$12.34", "US $1,234.56" etc.
@@ -106,12 +147,16 @@ def _parse_ebay_li(li) -> Optional[EbaySold]:
             shipping_usd = _parse_usd(ship_text)
 
     total_usd = price_usd + (shipping_usd or 0.0)
+    sub = li.select_one(".s-card__subtitle, .SECONDARY_INFO, .s-item__subtitle")
+    row_text = li.get_text(" ", strip=True)
     return EbaySold(
         title=title[:200],
         price_usd=price_usd,
         shipping_usd=shipping_usd,
         total_usd=total_usd,
         url=url,
+        condition=_condition(sub.get_text(" ", strip=True) if sub else "") or _condition(title),
+        sold_date=_sold_date(row_text),
     )
 
 
@@ -139,6 +184,11 @@ def parse_ebay_sold_html(html: str, jpy_per_usd: Optional[float] = None) -> list
         seen.add(it.url)
         out.append(it)
     return out
+
+
+def build_ebay_active_url(query: str) -> str:
+    """出品中（競合）の検索。件数だけ読む。"""
+    return f"https://www.ebay.com/sch/i.html?_nkw={quote_plus(query)}&LH_BIN=1&rt=nc"
 
 
 def build_ebay_research_url(query: str) -> str:

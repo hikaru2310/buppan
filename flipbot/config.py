@@ -36,6 +36,9 @@ class Costs(BaseModel):
     # 米国向けDDP: 関税はセラー負担。米国の買い手比率 × 関税率 を売価比で見込む
     us_buyer_share: float = 0.5
     us_duty_rate: float = 0.10
+    # 実送料の学習: 発送済みSKUの実送料が learn_min_n 件以上たまったジャンルは、その中央値を送料の見込みに使う
+    learn_shipping: bool = True
+    learn_min_n: int = 3
 
 
 class Fees(BaseModel):
@@ -160,6 +163,13 @@ class AppConfig(BaseModel):
     # 異常（403/429・人間確認・急な0件）を検知したらメルカリ取得を止める時間（時間）。連続するたびに倍、上限あり
     mercari_pause_hours: float = 3
     mercari_pause_max_hours: float = 24
+    # DBのバックアップ（1日1回 data/backups に保存）。backup_dir を指定するとそこにもコピー（例: iCloud Drive）
+    backup_keep: int = 14
+    backup_dir: Optional[str] = None
+    # 売れてから発送までの社内期限（日）
+    handling_days: int = 3
+    # 監視範囲: all = 設定ジャンル＋マスター / masters_only = マスターだけ（メルカリへのアクセス最小）
+    scan_mode: str = "all"
     # メルカリ一覧の遅延読み込み対策のスクロール回数（多いほど件数↑・時間↑）
     mercari_scroll_steps: int = 18
     # eBay成約データの再利用時間（0で毎回取得）。eBayへのアクセス回数を減らす

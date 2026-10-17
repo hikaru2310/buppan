@@ -44,16 +44,16 @@ function candRows(list,{compact=false}={}){
     return `<tr>
       <td class="meta">${i+1}</td>
       <td class="item"><div class="itemrow">${c.image_url?`<img class="thumb" src="${esc(c.image_url)}" alt="" loading="lazy">`:""}<div>
-        <div>${c.is_master?'<span class="tag new">★マスター</span>':""}${c.is_new?'<span class="tag new">NEW</span>':""}${c.near_miss?'<span class="tag warn">基準未満</span>':""}${c.is_auction?'<span class="tag warn">オークション</span>':""}${c.condition?`<span class="tag">${esc(c.condition)}</span>`:""}${c.is_shop?'<span class="tag">ショップ</span>':""}<span class="tag">${esc(c.category||c.genre)}</span></div>
+        <div>${c.is_master?'<span class="tag new">★マスター</span>':""}${c.is_new?'<span class="tag new">NEW</span>':""}${c.near_miss?'<span class="tag warn">基準未満</span>':""}${c.is_auction?'<span class="tag warn">オークション</span>':""}${c.condition?`<span class="tag">${esc(c.condition)}</span>`:""}${c.is_shop?'<span class="tag">ショップ</span>':""}${rotRisk(c)?'<span class="tag warn">回転リスク</span>':""}${restricted(c.category)?'<span class="tag warn">仕入れ抑制中</span>':""}<span class="tag">${esc(c.category||c.genre)}</span></div>
         <a class="title" href="${esc(c.mercari_url)}" target="_blank" rel="noopener">${esc(c.mercari_title)}</a>
         <div class="meta">${esc(c.genre)} ・ ${c.shipping_included?"送料込み":"送料別"} ・ 初回検知 ${dtfmt(c.first_seen)}</div>
         <div class="links"><a href="${esc(c.mercari_url)}" target="_blank" rel="noopener">${isSample()?"メルカリで検索（サンプル）":"メルカリ商品ページ"} ↗</a>
           ${c.ebay_sold_search_url?`<a href="${esc(c.ebay_sold_search_url)}" target="_blank" rel="noopener">eBay落札相場 ↗</a>`:""}
           ${c.ebay_research_url?`<a href="${esc(c.ebay_research_url)}" target="_blank" rel="noopener">Product Research ↗</a>`:""}</div></div></div></td>
-      <td class="num ${c.profit_jpy>=(c.min_profit_jpy||0)?"pos":"neg"} big">${yen(c.profit_jpy)}<div class="meta">下限 ${yen(c.min_profit_jpy)}</div></td>
+      <td class="num ${c.profit_jpy>=(c.min_profit_jpy||0)?"pos":"neg"} big">${yen(c.profit_jpy)}<div class="meta">下限 ${yen(c.min_profit_jpy)}</div>${c.limit_price_jpy!=null?`<div class="meta" title="この価格以下で買えれば下限利益を確保（値下げ交渉の目安）">指値 <b>${yen(c.limit_price_jpy)}</b></div>`:""}</td>
       <td class="num"><b>${pct(c.roi)}</b></td>
       <td class="num neg">${yen(c.buy_price_jpy)}</td>
-      <td class="num">${usd(c.market_usd)}<div class="meta"><a href="#" data-o="${esc(k)}">根拠 sold ${c.comps_count}件</a>${c.comps_count<3?' <span class="tag warn">需要薄</span>':""}</div></td>
+      <td class="num">${usd(c.market_usd)}<div class="meta"><a href="#" data-o="${esc(k)}">根拠 sold ${c.comps_count}件</a>${c.comps_count<3?' <span class="tag warn">需要薄</span>':""}</div>${demandText(c)}</td>
       <td class="num"><span class="bar"><i style="width:${c.match_score*100}%"></i></span>${(c.match_score*100).toFixed(0)}</td>
       ${compact?"":`<td class="num" style="color:var(--new)">${yen(c.breakeven_buy_jpy)}</td>`}
       <td class="num"><a class="btn buy sm" href="${esc(c.mercari_url)}" target="_blank" rel="noopener">仕入れる</a>
@@ -83,8 +83,11 @@ function breakdown(c){
     <dt class="tot">貢献利益 / 仕入ROI</dt><dd class="tot">${yen(c.profit_jpy)} / ${pct(c.roi)}</dd>
     ${row("売上高貢献利益率",pct(c.margin,1))}
     ${row("損益分岐の仕入れ上限",yen(c.breakeven_buy_jpy))}</dl>
-    <div class="comps"><div class="meta" style="margin-bottom:4px">相場の根拠：eBayで実際に売れた商品（照合上位${c.comps.length}件／全${c.comps_count}件の中央値）</div>${c.comps.map(x=>
-      `<a href="${esc(x.url)}" target="_blank" rel="noopener">$${x.total_usd.toFixed(0)} — ${esc(x.title)}（一致${(x.score*100).toFixed(0)}）↗</a>`).join("")}
+    <div class="comps"><div class="meta" style="margin-bottom:4px">相場の根拠：eBayで実際に売れた商品（照合上位${c.comps.length}件／全${c.comps_count}件の中央値）${c.comp_note?`・${esc(c.comp_note)}`:""}</div>
+      <div class="meta" style="margin-bottom:4px">同じ商品なら ✓、別物なら ✗ を押してください（照合精度の実測と学習に使います。✗は次から比較対象を外します）</div>${c.comps.map(x=>{const lk=c.mercari_title+"\t"+x.url, lb=(S.labels||{})[lk];
+      return `<div class="pv" style="margin:2px 0"><a href="${esc(x.url)}" target="_blank" rel="noopener" style="flex:1">$${x.total_usd.toFixed(0)} — ${esc(x.title)}（一致${(x.score*100).toFixed(0)}）↗</a>
+        <button class="btn sm ${lb===1?"dark":"ghost"}" data-lab="1" data-ck="${esc(c.item_key)}" data-ct="${esc(x.title)}" data-cu="${esc(x.url)}">✓</button><button class="btn sm ${lb===0?"buy":"ghost"}" data-lab="0" data-ck="${esc(c.item_key)}" data-ct="${esc(x.title)}" data-cu="${esc(x.url)}">✗</button></div>`}).join("")}
+      ${demandBlock(c)}
       <div class="meta" style="margin:10px 0 4px">自分の目で確かめる</div>
       <a href="${esc(c.mercari_url)}" target="_blank" rel="noopener">${isSample()?"メルカリで検索（サンプルのため商品ページなし）":"このメルカリ商品ページ"} ↗</a>
       ${c.ebay_sold_search_url?`<a href="${esc(c.ebay_sold_search_url)}" target="_blank" rel="noopener">eBayの落札（Sold）検索結果 ↗</a>`:""}
@@ -114,7 +117,20 @@ async function saveMaster(btn){
   const box=btn.closest("[data-mf]"), o={}; box.querySelectorAll("[name]").forEach(i=>o[i.name]=i.value); if(box.dataset.id) o.id=box.dataset.id;
   const r=await (await post("/api/watch",o)).json(); toast(r.message); if(r.ok){masterFor=null; editing=null; load()}
 }
+function rotRisk(c){const d=c.demand||{};return d.sell60!=null&&c.plan_sell60&&d.sell60<c.plan_sell60}
+function restricted(cat){return !!((S.ops.restrictions||{}).categories||{})[cat]}
+function demandText(c){const d=c.demand||{};if(!d.sold_30d&&d.sold_30d!==0)return "";
+  return `<div class="meta" title="成約の日付と出品中の件数から推定">月${d.sold_30d}件成約${d.est_days!=null?` ・ 約${d.est_days}日で売れる`:""}</div>`}
+function demandBlock(c){const d=c.demand||{};if(d.sold_30d==null)return "";
+  return `<div class="meta" style="margin:10px 0 4px">回転（eBay）</div><div class="mini">月の成約 <b>${d.sold_30d}件</b>${d.dated?"":"（日付が読めないため90日で按分）"} ・ 出品中 <b>${d.active_count??"—"}件</b> ・ 消化率 <b>${pct(d.str)}</b> ・ 売れるまで <b>${d.est_days!=null?"約"+d.est_days+"日":"—"}</b> ・ 60日以内に売れる見込み <b>${pct(d.sell60)}</b>${c.plan_sell60?`（計画 ${pct(c.plan_sell60)}）`:""}</div>`}
+async function label(b){
+  const c=[...S.candidates,...(evalRes?.candidate?[evalRes.candidate]:[])].find(x=>x.item_key===b.dataset.ck); if(!c) return;
+  const key=c.mercari_title+"\t"+b.dataset.cu, cur=(S.labels||{})[key], lab=+b.dataset.lab;
+  const r=await (await post("/api/label",{target_id:c.target_id,mercari_title:c.mercari_title,ebay_title:b.dataset.ct,ebay_url:b.dataset.cu,label:cur===lab?null:lab})).json();
+  toast(r.message); load();
+}
 function bindRows(){
+  $$("[data-lab]").forEach(b=>b.onclick=()=>label(b));
   $$("[data-master]").forEach(b=>b.onclick=()=>{masterFor=masterFor===b.dataset.master?null:b.dataset.master;render()});
   $$("[data-msave]").forEach(b=>b.onclick=()=>saveMaster(b));
   $$("[data-q]").forEach(b=>b.onclick=()=>addQ(b.dataset.q));
@@ -202,7 +218,10 @@ VIEWS.queue=["実務1 仕入れ / 仕入れキュー",()=>{
   Object.entries(S.ops.categories||{}).forEach(([k,v])=>byCat[k]=v.inventory_jpy);
   q.forEach(x=>byCat[x.category||"未分類"]=(byCat[x.category||"未分類"]||0)+x.buy_price_jpy);
   const total=inv+cost, over=Object.entries(byCat).filter(([,v])=>total&&v/total>.4);
-  return h1(`今、ポチる${q.length}件。`,"メルカリで購入できたら、実際の価格を入れて「仕入れ済みにする」を押してください。SKUが採番され、「入荷・検品」に移ります。")
+  const rs=S.ops.restrictions||{}, rq=q.filter(x=>restricted(x.category));
+  return h1(`今、ポチる${q.length}件。`,"メルカリで購入できたら（購入はスマホのモバイル回線で）、実際の価格を入れて「仕入れ済みにする」を押してください。SKUが採番され、「入荷・検品」に移ります。")
+  + ((rs.global||[]).length?`<div class="note"><b>全体の仕入れ制限（リスク管理の自動対応）</b><br>${rs.global.map(esc).join("<br>")}</div>`:"")
+  + (rq.length?`<div class="note"><b>仕入れ抑制中のカテゴリの商品が${rq.length}件あります</b><br>${Object.entries(rs.categories||{}).map(([k,v])=>`${esc(k)}：${v.map(esc).join("・")}`).join("<br>")}</div>`:"")
   + (over.length&&total>200000?`<div class="note">資金配分ルール：キューを全部買うと「${over.map(([k,v])=>`${esc(k)} ${pct(v/total)}`).join("・")}」となり、1カテゴリ上限40%を超えます。</div>`:"")
   + `<div class="card">${q.length?`<div class="wide"><table><thead><tr><th>#</th><th>アイテム</th><th class="num">仕入</th><th class="num">貢献利益</th><th class="num">ROI</th><th class="num">損益分岐</th><th></th></tr></thead><tbody>${q.map((x,i)=>`<tr>
       <td class="meta">·${String(i+1).padStart(2,"0")}</td><td class="item"><span class="tag">${esc(x.category||x.genre)}</span><a class="title" href="${esc(x.mercari_url)}" target="_blank" rel="noopener">${esc(x.mercari_title)}</a></td>

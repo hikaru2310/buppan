@@ -41,8 +41,26 @@ VIEWS.listing=["実務2 入荷・出品・在庫 / 出品",()=>{
       <td class="wrap">${(x.comps||[]).map(c=>`<div class="mini"><a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.title)}</a> <span class="meta">$${(+c.total_usd).toFixed(0)}</span></div>`).join("")||'<span class="meta">—</span>'}
         ${x.ebay_sold_search_url?`<div class="mini"><a href="${esc(x.ebay_sold_search_url)}" target="_blank" rel="noopener">落札相場を開く ↗</a></div>`:""}</td>
       <td><div class="form-inline" data-f><label>出品価格(USD)<input name="list_price_usd" type="number" step="1" value="${rec}"></label><label>eBay出品URL<input name="ebay_url" class="w2" placeholder="https://www.ebay.com/itm/..."></label>
-        <button class="btn dark sm" data-act="list" data-sku="${esc(x.sku)}">出品した</button></div></td></tr>`})):emptyCard("出品待ちの商品はありません（検品合格すると、ここに出ます）"));
+        <button class="btn dark sm" data-act="list" data-sku="${esc(x.sku)}">出品した</button></div>
+        <div style="margin-top:6px"><button class="btn sm" data-draft="${esc(x.sku)}">${draftFor===x.sku?"下書きを閉じる":"英語の出品下書きを作る"}</button>
+        <span class="meta">eBayの「カスタムラベル（SKU）」に <b>${esc(x.sku)}</b> を入れてください（CSV取り込みで自動反映するため）</span></div></td></tr>`
+      +(draftFor===x.sku?`<tr class="detail"><td colspan="4">${draftView(drafts[x.sku])}</td></tr>`:"")})):emptyCard("出品待ちの商品はありません（検品合格すると、ここに出ます）"));
+},()=>{
+  $$("[data-draft]").forEach(b=>b.onclick=async()=>{const k=b.dataset.draft; if(draftFor===k){draftFor=null;render();return}
+    drafts[k]=drafts[k]||await (await fetch("/api/listing-draft?sku="+encodeURIComponent(k))).json(); draftFor=k; render()});
+  $$("[data-copy]").forEach(b=>b.onclick=async()=>{const t=document.getElementById(b.dataset.copy).value;try{await navigator.clipboard.writeText(t);toast("コピーしました")}catch(e){prompt("コピーしてください",t)}});
 }];
+let draftFor=null; const drafts={};
+function draftView(d){
+  if(!d) return '<span class="meta">作成中…</span>';
+  if(d.error) return `<div class="note">${esc(d.error)}</div>`;
+  const ta=(id,v,rows)=>`<textarea id="${id}" rows="${rows}" style="width:100%;font:inherit;font-size:12px;border:1px solid var(--line);border-radius:6px;padding:6px;background:var(--bg);color:var(--ink)">${esc(v)}</textarea>`;
+  return `<div class="grid2" style="gap:12px"><div><div class="pv"><b>タイトル</b><span class="meta">${d.title_len}/80文字</span><button class="btn sm" data-copy="dt-${esc(d.custom_label)}">コピー</button></div>${ta("dt-"+d.custom_label,d.title,2)}
+    <div class="pv" style="margin-top:8px"><b>説明文</b><button class="btn sm" data-copy="dd-${esc(d.custom_label)}">コピー</button></div>${ta("dd-"+d.custom_label,d.description,14)}</div>
+    <div><b>Item specifics</b><div class="card rules" style="margin-top:4px">${Object.entries(d.specifics).map(([k,v])=>`<div class="r"><div>${esc(k)}</div><b>${esc(v)}</b></div>`).join("")}
+    <div class="r"><div>Custom label (SKU)</div><b>${esc(d.custom_label)}</b></div></div>
+    <div class="meta" style="margin-top:6px">ベースにした成約品：${esc(d.base_from||"—")}<br>状態ランクはメルカリの状態から仮置き。検品メモを反映して、写真と合っているか確認してから使ってください。</div></div></div>`;
+}
 
 // ---------- 在庫・値付け
 VIEWS.stock=["実務2 入荷・出品・在庫 / 在庫・値付け",()=>{
@@ -67,7 +85,7 @@ VIEWS.stock=["実務2 入荷・出品・在庫 / 在庫・値付け",()=>{
 VIEWS.ship=["実務3 販売・発送 / 発送",()=>{
   const s=skus("sold").sort((a,b)=>(a.ship_due||"").localeCompare(b.ship_due||""));
   const duty=S.costs?.us_duty_rate||0;
-  return stepHead("3-1","売れたら、期限内に発送する。","売れた日から3日以内を社内期限にしています（eBayのハンドリングタイムに合わせて調整）。米国宛てはDDP必須。送料と関税の実額を入れると、実現利益と予測誤差に反映されます。",["settle","着金・精算へ"])
+  return stepHead("3-1","売れたら、期限内に発送する。",`売れた日から${S.settings?.handling_days||3}日以内を社内期限にしています（config.yaml の app.handling_days）。`+"米国宛てはDDP必須。送料と関税の実額を入れると、実現利益と予測誤差に反映されます。eBayの注文レポートCSVを取り込めば、売約・発送は自動で反映されます（着金・精算の画面）。",["settle","着金・精算へ"])
   + (s.length?opsTable(["商品","#売価","宛先・期限","発送記録"],s.map(x=>{const isUS=x.buyer_country==="US";const d=isUS?Math.round((x.sold_price_usd||0)*fx()*duty):0;return `<tr>${skuCell(x)}
       <td class="num"><b>${usd(x.sold_price_usd)}</b><div class="meta">${dfmt(x.sold_at)} 売約</div></td>
       <td><b>${esc(x.buyer_country||"—")}</b>${isUS?' <span class="tag warn">DDP必須</span>':""}<div class="${x.ship_overdue?"overdue":"meta"}">期限 ${dtfmt(x.ship_due)}${x.ship_overdue?"（超過）":""}</div></td>
@@ -81,23 +99,35 @@ VIEWS.ship=["実務3 販売・発送 / 発送",()=>{
 VIEWS.settle=["実務4 着金・精算 / 着金・精算",()=>{
   const sh=skus("shipped"), paid=skus("paid").slice(0,30), ret=skus("returned");
   const errs=paid.filter(x=>num(x.realized_jpy)&&x.predicted_profit_jpy);
-  return stepHead("4-1","着金を記録して、予測と実績の差を見る。","Payoneer / Wise で円に換えて口座に入った金額を入れてください（eBay手数料・広告・換金差引後）。実現利益＝入金額−仕入−送料−関税−梱包−作業費。予測利益との差が「予測利益誤差」（計画：20%超で拡大停止）。")
-  + h2("· 01","着金待ち",`${sh.length}件`)
-  + (sh.length?opsTable(["商品","#売価","発送","着金"],sh.map(x=>`<tr>${skuCell(x)}<td class="num"><b>${usd(x.sold_price_usd)}</b></td>
+  return stepHead("4-1","届いたら完了にして、予測と実績の差を見る。","Payoneer/Wiseの入金は複数の取引のまとめ払いなので、SKUごとの入金額は不要です。商品が届いて取引が終わったら「完了」にします。実現利益は「売価 − eBay手数料（CSVで取り込めば実額）− 換金差 − 仕入 − 実送料 − 関税 − 梱包 − 作業費」で計算します。月ごとの入金総額は「KPI・ファネル」の月次実績に入れて照合します。")
+  + h2("· 01","eBayのCSVを取り込む","Seller Hubの注文レポート（売約・発送・追跡番号）／取引レポート（手数料の実額）。カスタムラベル＝SKU で照合")
+  + `<div class="card" style="padding:14px 18px"><div class="form-inline"><input type="file" id="ebayCsv" accept=".csv,text/csv"><button class="btn" id="ebayPreview">内容を確認</button><button class="btn dark" id="ebayApply" ${importPlan?.changes?.length?"":"disabled"}>反映する</button></div>
+    ${importPlan?`<div class="note">${esc(importPlan.message)}</div>${(importPlan.changes||[]).length?`<div class="mini">${importPlan.changes.slice(0,30).map(c=>`<div>${esc(c.sku)}：${esc(c.label)}</div>`).join("")}</div>`:""}${(importPlan.errors||[]).map(e=>`<div class="mini neg">${esc(e)}</div>`).join("")}`:""}</div>`
+  + h2("· 02","配送中（完了待ち）",`${sh.length}件`)
+  + (sh.length?opsTable(["商品","#売価","発送","#実現利益（計算）","完了・返品"],sh.map(x=>`<tr>${skuCell(x)}<td class="num"><b>${usd(x.sold_price_usd)}</b>${x.fees_usd!=null?`<div class="meta">手数料 $${x.fees_usd}</div>`:""}</td>
       <td class="mini">${esc(x.carrier||"")} ${esc(x.tracking||"")}<div class="meta">${dfmt(x.shipped_at)} 発送・送料${yen(x.shipping_cost_jpy)}・関税${yen(x.duty_jpy)}</div></td>
-      <td><div class="form-inline" data-f><label>入金額(円)<input name="payout_jpy" type="number" value="${payoutEstimate(x.sold_price_usd||0)}"></label>
-        <button class="btn dark sm" data-act="pay" data-sku="${esc(x.sku)}">着金した</button></div>
-        <div class="form-inline" data-f style="margin-top:6px"><select name="return_reason">${opt(RETURNS)}</select><button class="btn sm" data-act="return" data-sku="${esc(x.sku)}">返品になった</button></div></td></tr>`)):emptyCard("着金待ちの商品はありません"))
-  + h2("· 02","予測と実績（直近の着金済み）",`予測利益誤差（平均・絶対値）${pct(S.ops.indicators?.forecast_error,1)}`)
-  + (paid.length?opsTable(["商品","#売価","#入金額","#予測利益","#実現利益","#誤差",""],paid.map(x=>{const e=num(x.realized_jpy)&&x.predicted_profit_jpy?(x.realized_jpy-x.predicted_profit_jpy)/Math.abs(x.predicted_profit_jpy):null;return `<tr>${skuCell(x)}
-      <td class="num">${usd(x.sold_price_usd)}</td><td class="num">${yen(x.payout_jpy)}</td><td class="num">${yen(x.predicted_profit_jpy)}</td>
+      <td class="num">${yen(x.estimated_jpy)}<div class="meta">予測 ${yen(x.predicted_profit_jpy)}</div></td>
+      <td><div class="form-inline" data-f><button class="btn dark sm" data-act="pay" data-sku="${esc(x.sku)}">完了にする</button><label>入金額(任意・円)<input name="payout_jpy" type="number" placeholder="分かる場合のみ"></label></div>
+        <div class="form-inline" data-f style="margin-top:6px"><select name="return_reason">${opt(RETURNS)}</select><label>返金・返送の損失(円)<input name="return_loss_jpy" type="number"></label><button class="btn sm" data-act="return" data-sku="${esc(x.sku)}">返品になった</button></div></td></tr>`)):emptyCard("配送中の商品はありません"))
+  + (sh.length>1?`<div style="margin:8px 0"><button class="btn" id="payAll">配送中の${sh.length}件をまとめて完了にする</button></div>`:"")
+  + h2("· 03","予測と実績（直近の完了）",`予測利益誤差（平均・絶対値）${pct(S.ops.indicators?.forecast_error,1)}`)
+  + (paid.length?opsTable(["商品","#売価","#受取（計算）","#予測利益","#実現利益","#誤差",""],paid.map(x=>{const e=num(x.realized_jpy)&&x.predicted_profit_jpy?(x.realized_jpy-x.predicted_profit_jpy)/Math.abs(x.predicted_profit_jpy):null;return `<tr>${skuCell(x)}
+      <td class="num">${usd(x.sold_price_usd)}</td><td class="num">${yen(x.received_jpy)}${x.payout_jpy?'<div class="meta">入金額で計算</div>':""}</td><td class="num">${yen(x.predicted_profit_jpy)}</td>
       <td class="num ${x.realized_jpy>=0?"pos":"neg"}"><b>${yen(x.realized_jpy)}</b></td><td class="num ${num(e)&&Math.abs(e)>.2?"neg":""}">${num(e)?(e>=0?"+":"")+pct(e,1):"—"}</td>
       <td class="num">${x.realized_jpy>0?`<button class="btn sm ghost" data-edit="m${esc(x.sku)}">マスター登録</button>`:""}</td></tr>`
-      +(editing==="m"+x.sku?`<tr class="detail"><td colspan="7">${masterForm(skuMasterDefaults(x))}</td></tr>`:"")})):emptyCard("着金済みの商品はまだありません"))
-  + (errs.length>=3?`<div class="note">誤差が大きい商品は、送料（実費 vs 見込み）・関税・売価（相場 vs 実売）のどれがずれたかを確認し、config.yaml のジャンル送料や costs を更新してください。</div>`:"")
-  + h2("· 03","返品",`${ret.length}件・返品率 ${pct(S.ops.indicators?.return_rate,1)}（計画上限4%・停止7%）`)
-  + (ret.length?opsTable(["商品","理由","#仕入","返品日"],ret.map(x=>`<tr>${skuCell(x)}<td>${esc(x.return_reason)}</td><td class="num">${yen(x.buy_price_jpy)}</td><td>${dfmt(x.returned_at)}</td></tr>`)):emptyCard("返品はありません"));
+      +(editing==="m"+x.sku?`<tr class="detail"><td colspan="7">${masterForm(skuMasterDefaults(x))}</td></tr>`:"")})):emptyCard("完了した商品はまだありません"))
+  + (errs.length>=3?`<div class="note">誤差が大きい商品は、送料（実費 vs 見込み）・関税・売価（相場 vs 実売）のどれがずれたかを確認してください。実送料はジャンルごとに3件たまると自動で見込みに反映されます。</div>`:"")
+  + h2("· 04","返品",`${ret.length}件・返品率 ${pct(S.ops.indicators?.return_rate,1)}（計画上限4%・停止7%）`)
+  + (ret.length?opsTable(["商品","理由","#損失","返品日","その後"],ret.map(x=>`<tr>${skuCell(x)}<td>${esc(x.return_reason)}</td><td class="num">${yen(x.return_loss_jpy)}</td><td>${dfmt(x.returned_at)}</td>
+      <td><div class="form-inline" data-f><button class="btn sm dark" data-act="restock" data-sku="${esc(x.sku)}">手元に戻った→再検品</button></div>
+        <div class="form-inline" data-f style="margin-top:6px"><label>損失(円)<input name="return_loss_jpy" type="number" value="${x.return_loss_jpy??x.buy_price_jpy}"></label><button class="btn sm" data-act="writeoff" data-sku="${esc(x.sku)}">戻らない→損失処理</button></div></td></tr>`)):emptyCard("返品はありません"));
+},()=>{
+  const read=()=>new Promise(res=>{const f=$("#ebayCsv").files[0]; if(!f){toast("CSVファイルを選んでください");return res(null)} const r=new FileReader(); r.onload=()=>res(r.result); r.readAsText(f)});
+  const pv=$("#ebayPreview"); if(pv) pv.onclick=async()=>{const t=await read(); if(!t) return; importText=t; importPlan=await (await post("/api/ebay-import",{text:t,apply:false})).json(); render()};
+  const ap=$("#ebayApply"); if(ap) ap.onclick=async()=>{if(!importText) return; importPlan=await (await post("/api/ebay-import",{text:importText,apply:true})).json(); toast(importPlan.message); importText=null; load()};
+  const pa=$("#payAll"); if(pa) pa.onclick=async()=>{if(!confirm("配送中の商品をすべて完了にしますか？"))return; for(const x of skus("shipped")) await post("/api/sku",{sku:x.sku,action:"pay",fields:{}}); toast("まとめて完了にしました"); load()};
 }];
+let importPlan=null, importText=null;
 
 // 着金済みSKU → マスター：実送料と、実績から逆算した指値を初期値にする
 function skuMasterDefaults(x){
@@ -110,19 +140,41 @@ function skuMasterDefaults(x){
 }
 
 // ---------- SKU台帳
+const STATUS_NAMES={ordered:"到着待ち",arrived:"検品待ち",ready:"出品待ち",listed:"出品中",sold:"発送待ち",shipped:"配送中",paid:"完了",rejected:"不合格・損失",returned:"返品"};
+function ledgerRow(x){
+  return `<tr>${skuCell(x)}
+    <td><span class="badge ${x.status==="paid"?"ok":["rejected","returned"].includes(x.status)?"alert":"warn"}">${esc(STATUS_NAMES[x.status]||x.status_label)}</span></td>
+    <td class="num">${yen(x.buy_price_jpy)}</td><td class="num">${yen(x.predicted_profit_jpy)}</td><td class="num">${usd(x.sold_price_usd||x.list_price_usd)}</td>
+    <td class="num">${num(x.realized_jpy)?yen(x.realized_jpy):num(x.estimated_jpy)?`<span class="meta">見込 ${yen(x.estimated_jpy)}</span>`:"—"}</td>
+    <td class="mini">買 ${dfmt(x.purchased_at)}${x.listed_at?`<br>出 ${dfmt(x.listed_at)}`:""}${x.sold_at?`<br>売 ${dfmt(x.sold_at)}`:""}${x.paid_at?`<br>完 ${dfmt(x.paid_at)}`:""}</td>
+    <td class="num"><button class="btn sm ghost" data-edit="${esc(x.sku)}">${editing===x.sku?"閉じる":"修正"}</button></td></tr>`
+    +(editing===x.sku?`<tr class="detail"><td colspan="8">${editForm(x)}</td></tr>`:"");
+}
+// 入力ミスの修正（状態は変えない）と、一つ前の工程に戻す
+function editForm(x){
+  const d=v=>v?String(v).slice(0,10):"";
+  const f=(n,l,v,t="text")=>`<label>${l}<input name="${n}" type="${t}" value="${esc(v??"")}"></label>`;
+  return `<div class="form-inline" data-f>
+    ${f("title","商品名",x.title)}${f("buy_price_jpy","仕入(円)",x.buy_price_jpy,"number")}${f("purchased_at","仕入日",d(x.purchased_at),"date")}
+    ${f("list_price_usd","出品価格(USD)",x.list_price_usd,"number")}${f("ebay_url","eBay URL",x.ebay_url)}
+    ${f("sold_price_usd","売価(USD)",x.sold_price_usd,"number")}${f("buyer_country","国",x.buyer_country)}${f("sold_at","売約日",d(x.sold_at),"date")}
+    ${f("shipping_cost_jpy","送料(円)",x.shipping_cost_jpy,"number")}${f("duty_jpy","関税(円)",x.duty_jpy,"number")}${f("tracking","追跡番号",x.tracking)}
+    ${f("fees_usd","eBay手数料(USD)",x.fees_usd,"number")}${f("payout_jpy","入金額(円・任意)",x.payout_jpy,"number")}${f("return_loss_jpy","返品損失(円)",x.return_loss_jpy,"number")}
+    <label>カテゴリ<select name="category">${(S.plan.categories||[]).map(c=>`<option ${c["カテゴリ"]===x.category?"selected":""}>${esc(c["カテゴリ"])}</option>`).join("")}</select></label>
+    ${f("notes","メモ",x.notes)}
+    <button class="btn dark sm" data-act="edit" data-sku="${esc(x.sku)}">保存</button></div>
+    <div style="margin-top:8px" class="pv"><span class="meta">工程を間違えて進めた場合：</span>
+      <button class="btn sm" data-act="back" data-sku="${esc(x.sku)}">一つ前の工程に戻す（今：${esc(STATUS_NAMES[x.status]||"")}）</button>
+      <button class="btn sm ghost" data-act="delete" data-sku="${esc(x.sku)}">台帳から削除</button></div>`;
+}
 VIEWS.ledger=["実務4 着金・精算 / SKU台帳",()=>{
   const q=$("#q").value.trim().toLowerCase(), st=localGet("ledgerSt")||"";
   const list=S.ops.skus.filter(x=>(!st||x.status===st)&&(!q||(x.title+x.sku+(x.category||"")+(x.tracking||"")).toLowerCase().includes(q)));
   const c=S.ops.counts||{};
-  return h1("すべてのSKUを、1行ずつ。","購入から着金までの全記録です。CSVで書き出して会計（証憑突合）やシートの更新に使えます。")
-  + `<div class="toolbar"><select id="ledgerSt"><option value="">すべて（${S.ops.skus.length}）</option>${Object.entries({ordered:"到着待ち",arrived:"検品待ち",ready:"出品待ち",listed:"出品中",sold:"発送待ち",shipped:"着金待ち",paid:"完了",rejected:"検品不合格",returned:"返品"}).map(([k,l])=>`<option value="${k}" ${st===k?"selected":""}>${l}（${c[k]||0}）</option>`).join("")}</select>
+  return h1("すべてのSKUを、1行ずつ。","購入から完了までの全記録です。「修正」で入力ミスを直したり、一つ前の工程に戻したりできます。CSVで書き出して会計（証憑突合）やシートの更新に使えます。")
+  + `<div class="toolbar"><select id="ledgerSt"><option value="">すべて（${S.ops.skus.length}）</option>${Object.entries(STATUS_NAMES).map(([k,l])=>`<option value="${k}" ${st===k?"selected":""}>${l}（${c[k]||0}）</option>`).join("")}</select>
      <a class="btn" href="/api/skus.csv">CSV 書き出し</a></div>`
-  + (list.length?opsTable(["SKU・商品","状態","#仕入","#予測利益","#売価","#実現利益","日付",""],list.map(x=>`<tr>${skuCell(x)}
-      <td><span class="badge ${x.status==="paid"?"ok":["rejected","returned"].includes(x.status)?"alert":"warn"}">${esc(x.status_label)}</span></td>
-      <td class="num">${yen(x.buy_price_jpy)}</td><td class="num">${yen(x.predicted_profit_jpy)}</td><td class="num">${usd(x.sold_price_usd||x.list_price_usd)}</td>
-      <td class="num">${num(x.realized_jpy)?yen(x.realized_jpy):num(x.estimated_jpy)?`<span class="meta">見込 ${yen(x.estimated_jpy)}</span>`:"—"}</td>
-      <td class="mini">買 ${dfmt(x.purchased_at)}${x.listed_at?`<br>出 ${dfmt(x.listed_at)}`:""}${x.sold_at?`<br>売 ${dfmt(x.sold_at)}`:""}${x.paid_at?`<br>金 ${dfmt(x.paid_at)}`:""}</td>
-      <td class="num"><button class="btn sm ghost" data-edit="${esc(x.sku)}">メモ</button>${editing===x.sku?`<div class="form-inline" data-f style="margin-top:4px"><input name="notes" class="w2" value="${esc(x.notes||"")}"><button class="btn sm" data-act="note" data-sku="${esc(x.sku)}">保存</button><button class="btn sm ghost" data-act="delete" data-sku="${esc(x.sku)}">削除</button></div>`:""}</td></tr>`)):emptyCard("該当するSKUはありません"));
+  + (list.length?opsTable(["SKU・商品","状態","#仕入","#予測利益","#売価","#実現利益","日付",""],list.map(ledgerRow)):emptyCard("該当するSKUはありません"));
 },()=>{const s=$("#ledgerSt"); if(s) s.onchange=()=>{localSet("ledgerSt",s.value);render()}}];
 
 // ---------- ルール・前提
@@ -167,11 +219,31 @@ VIEWS.rules=["設定 / ルール・前提",()=>{
     ${row("Slack","config.local.yaml の notify.slack_webhook_url（GitHubに上げない）",S.settings?.notify_configured?"設定済み":"未設定")}
     ${row("通知の対象","基準を満たした新着 / マスターのヒット（同じ出品は1回だけ）",`${S.settings?.notify?.on_new_candidates?"新着":""}${S.settings?.notify?.on_master_hits?"・マスター":""}`)}
     <div class="r"><div>テスト送信<span>設定後に押して届くか確認</span></div><button class="btn sm" id="notifyTest">テスト通知を送る</button></div></div>`
-  + h2("§","監視ジャンル（config.yaml）",`${(r.config_genres||r.genres||[]).length}件`)
-  + `<div class="card"><div class="wide"><table><thead><tr><th>ジャンル</th><th>カテゴリ</th><th>仮説ID</th><th>メルカリ検索</th><th>eBay検索</th><th class="num">国際送料</th><th class="num">下限</th></tr></thead><tbody>
-    ${(r.config_genres||r.genres||[]).map(g=>`<tr><td><b>${esc(g.name)}</b></td><td class="mini">${esc(g.category||"")}</td><td class="mini">${esc((g.plan_ids||[]).join(","))}</td><td class="mini">${esc(g.mercari_query)}</td><td class="mini">${esc(g.ebay_query)}</td>
-      <td class="num">${yen(g.shipping_cost_jpy)}</td><td class="num">${g.min_profit_jpy!=null?yen(g.min_profit_jpy):yen((catPlan(g.category)["貢献利益下限"])??th.min_profit_jpy)}</td></tr>`).join("")}
-  </tbody></table></div></div>`;
+  + h2("§","運用（バックアップ・発送期限・前提の出どころ）")
+  + `<div class="card rules">
+    ${row("監視範囲","all＝設定ジャンル＋マスター / masters_only＝マスターだけ（メルカリへのアクセス最小）",esc(S.settings?.scan_mode||"all"))}
+    ${row("DBのバックアップ","1日1回 data/backups に14日分（app.backup_dir を指定するとそこにもコピー）",S.settings?.backup_dir?"＋ "+esc(S.settings.backup_dir):"data/backups のみ")}
+    ${row("発送期限","売れてから（app.handling_days）",(S.settings?.handling_days||3)+" 日")}
+    ${row("計画シートから読んだ前提","前提条件タブに「米国の買い手比率」「米国関税率」の行があれば優先",(c.from_sheet||[]).length?esc(c.from_sheet.join("・")):"なし（config.yaml の値を使用）")}
+    ${row("実送料の学習","発送済みが3件以上のジャンルは実送料の中央値を見込みに使う",Object.entries(S.ops.ship_learn||{}).filter(([,v])=>v.n>=3).map(([g,v])=>`${esc(g)} ${yen(v.median)}`).join("・")||"まだなし")}</div>`
+  + h2("§","監視ジャンル",`有効 ${(r.all_genres||[]).filter(g=>g.active).length} / 全 ${(r.all_genres||[]).length}件。停止・追加は画面から（config.yaml は書き換えません）`)
+  + `<div class="card"><div class="wide"><table><thead><tr><th>ジャンル</th><th>カテゴリ</th><th>仮説ID</th><th>メルカリ検索</th><th>eBay検索</th><th class="num">国際送料</th><th class="num">下限</th><th></th></tr></thead><tbody>
+    ${(r.all_genres||[]).map(g=>`<tr style="${g.active?"":"opacity:.5"}"><td><b>${esc(g.name)}</b>${g.custom?' <span class="tag">画面で追加</span>':""}</td><td class="mini">${esc(g.category||"")}</td><td class="mini">${esc((g.plan_ids||[]).join(","))}</td><td class="mini">${esc(g.mercari_query)}</td><td class="mini">${esc(g.ebay_query)}</td>
+      <td class="num">${yen(g.shipping_cost_jpy)}</td><td class="num">${g.min_profit_jpy!=null?yen(g.min_profit_jpy):yen((catPlan(g.category)["貢献利益下限"])??th.min_profit_jpy)}</td>
+      <td class="num"><button class="btn sm" data-gtoggle="${esc(g.id)}" data-on="${g.active?0:1}">${g.active?"停止":"再開"}</button>${g.custom?` <button class="btn sm ghost" data-gdel="${esc(g.id)}">削除</button>`:""}</td></tr>`).join("")}
+  </tbody></table></div>
+  <div class="foot" style="display:block"><b>ジャンルを追加</b><div class="form-inline" id="gadd" style="margin-top:6px">
+    <label>名前<input name="name" class="w2"></label><label>メルカリ検索語<input name="mercari_query" class="w2"></label><label>eBay検索語（英語）<input name="ebay_query" class="w2"></label>
+    <label>カテゴリ<select name="category">${(S.plan.categories||[]).map(c=>`<option>${esc(c["カテゴリ"])}</option>`).join("")}</select></label>
+    <label>国際送料(円)<input name="shipping_cost_jpy" type="number" value="3500"></label><label>仮説ID<input name="plan_ids" placeholder="P013"></label>
+    <button class="btn dark sm" id="gaddBtn">追加</button></div></div></div>`;
 },()=>{const b=$("#cashSave"); if(b) b.onclick=async()=>{await post("/api/settings",{cash_jpy:$("#cashIn").value});toast("保存しました");load()};
   const t=$("#notifyTest"); if(t) t.onclick=async()=>{const r=await (await post("/api/notify-test",{})).json();toast(r.message)};
-  const m=$("#mResume"); if(m) m.onclick=async()=>{if(!confirm("一時停止を解除して、次のスキャンからメルカリの取得を再開しますか？"))return;const r=await (await post("/api/mercari-resume",{})).json();toast(r.message);load()}}];
+  const m=$("#mResume"); if(m) m.onclick=async()=>{if(!confirm("一時停止を解除して、次のスキャンからメルカリの取得を再開しますか？"))return;const r=await (await post("/api/mercari-resume",{})).json();toast(r.message);load()};
+  $$("[data-gtoggle]").forEach(b=>b.onclick=async()=>{const r=await (await post("/api/genre",{id:b.dataset.gtoggle,active:b.dataset.on==="1"})).json();toast(r.message);load()});
+  $$("[data-gdel]").forEach(b=>b.onclick=async()=>{if(!confirm("このジャンルを削除しますか？"))return;const r=await (await post("/api/genre",{id:b.dataset.gdel,delete:true})).json();toast(r.message);load()});
+  const ga=$("#gaddBtn"); if(ga) ga.onclick=async()=>{const o={};$$("#gadd [name]").forEach(i=>o[i.name]=i.value);
+    if(!o.name||!o.mercari_query||!o.ebay_query){toast("名前・メルカリ検索語・eBay検索語は必須です");return}
+    o.plan_ids=o.plan_ids?o.plan_ids.split(/[ ,、]+/).filter(Boolean):[];o.genre=o.name;
+    const r=await (await post("/api/genre",{custom:o})).json();toast(r.message);load()};
+}];
