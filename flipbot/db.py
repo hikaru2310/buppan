@@ -166,6 +166,13 @@ def migrate(con: sqlite3.Connection) -> None:
           updated_at TEXT
         );
 
+        -- スキャンごとに実際に取得したジャンル（ジャンルを順番に回すので、ジャンル別の最新結果を引くのに使う）
+        CREATE TABLE IF NOT EXISTS scan_targets (
+          scan_id INTEGER NOT NULL,
+          target_id TEXT NOT NULL,
+          PRIMARY KEY (scan_id, target_id)
+        );
+
         -- 通知済み（同じ出品を何度も通知しない）
         CREATE TABLE IF NOT EXISTS notified (
           item_key TEXT PRIMARY KEY,
@@ -257,3 +264,13 @@ def baseline_seen_at(con: sqlite3.Connection, target_id: str) -> Optional[str]:
 
 def log_event(con: sqlite3.Connection, kind: str, ref: str) -> None:
     con.execute("INSERT INTO events(ts, kind, ref) VALUES(?, ?, ?)", (utc_now_iso(), kind, ref))
+
+
+def get_setting(con: sqlite3.Connection, key: str, default: Optional[str] = None) -> Optional[str]:
+    row = con.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return row["value"] if row and row["value"] not in (None, "") else default
+
+
+def set_setting(con: sqlite3.Connection, key: str, value) -> None:
+    con.execute("INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, "" if value is None else str(value)))

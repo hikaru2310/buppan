@@ -141,7 +141,7 @@ class AppConfig(BaseModel):
     ebay_min_median_samples: int = 3
     poll_interval_seconds: int = 900
     # 画面版（serve）の自動スキャン間隔（分）。0で自動スキャンしない
-    auto_scan_minutes: int = 15
+    auto_scan_minutes: int = 60
     # live: 実サイト収集 / sample: 同梱サンプル / auto: 実サイトが0件ならサンプルで代替
     data_source: str = "live"
     # Web画面
@@ -153,6 +153,13 @@ class AppConfig(BaseModel):
     mercari_source: str = "browser"
     # api 利用時のアクセス間隔（秒・ランダム）
     mercari_api_interval: list[float] = Field(default_factory=lambda: [3.0, 7.0])
+    # 1回のスキャンで回すジャンル数（0=全部）。順番に回してメルカリへのアクセスを人の閲覧程度に抑える
+    genres_per_scan: int = 5
+    # 自動スキャン間隔の揺らぎ（±割合）。毎回同じ間隔でアクセスしない
+    auto_scan_jitter: float = 0.2
+    # 異常（403/429・人間確認・急な0件）を検知したらメルカリ取得を止める時間（時間）。連続するたびに倍、上限あり
+    mercari_pause_hours: float = 3
+    mercari_pause_max_hours: float = 24
     # メルカリ一覧の遅延読み込み対策のスクロール回数（多いほど件数↑・時間↑）
     mercari_scroll_steps: int = 18
     # eBay成約データの再利用時間（0で毎回取得）。eBayへのアクセス回数を減らす

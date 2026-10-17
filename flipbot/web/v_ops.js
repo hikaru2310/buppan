@@ -157,7 +157,9 @@ VIEWS.rules=["設定 / ルール・前提",()=>{
     ${row("付属品・別物よけ","相場(円)に対する仕入れ価格の下限比",pct(th.min_price_ratio))}
     ${row("データソース","live / sample / auto",esc(r.data_source))}
     ${row("メルカリの取得方法","browser＝公開の検索ページ / api＝内部検索API（非公式・要判断）",esc(S.settings?.mercari_source||""))}
-    ${row("自動スキャン","画面版の起動中",S.settings?.auto_scan_minutes?S.settings.auto_scan_minutes+"分おき":"停止")}</div>
+    ${row("自動スキャン","画面版の起動中（間隔は毎回±20%ずらす）",S.settings?.auto_scan_minutes?`${S.settings.auto_scan_minutes}分おき・1回${S.settings.genres_per_scan||"全"}ジャンルを順番に`:"停止")}
+    <div class="r"><div>メルカリ取得の自動停止<span>403/429・人間確認・急な0件を検知すると一時停止（連続するたびに長く）</span></div>
+      <div>${S.mercari_pause?.active?`<b class="neg">停止中（${dtfmt(S.mercari_pause.until)} まで）</b> <button class="btn sm" id="mResume">今すぐ再開</button><div class="meta">${esc(S.mercari_pause.reason||"")}</div>`:`<b>正常</b>${S.mercari_pause?.strikes?`<span class="meta">（直近の停止 ${S.mercari_pause.strikes}回）</span>`:""}`}</div></div></div>
   <h2><span class="no">§</span>除外語（3階層：全体 ＋ カテゴリ ＋ ジャンル）</h2><div class="card rules">
     ${row("全体","全ジャンル共通",esc((r.exclude_keywords||[]).join("・")))}
     ${Object.entries(S.settings?.category_excludes||{}).map(([k,v])=>row(esc(k),"カテゴリ別",esc(v.join("・")))).join("")}</div>
@@ -171,4 +173,5 @@ VIEWS.rules=["設定 / ルール・前提",()=>{
       <td class="num">${yen(g.shipping_cost_jpy)}</td><td class="num">${g.min_profit_jpy!=null?yen(g.min_profit_jpy):yen((catPlan(g.category)["貢献利益下限"])??th.min_profit_jpy)}</td></tr>`).join("")}
   </tbody></table></div></div>`;
 },()=>{const b=$("#cashSave"); if(b) b.onclick=async()=>{await post("/api/settings",{cash_jpy:$("#cashIn").value});toast("保存しました");load()};
-  const t=$("#notifyTest"); if(t) t.onclick=async()=>{const r=await (await post("/api/notify-test",{})).json();toast(r.message)}}];
+  const t=$("#notifyTest"); if(t) t.onclick=async()=>{const r=await (await post("/api/notify-test",{})).json();toast(r.message)};
+  const m=$("#mResume"); if(m) m.onclick=async()=>{if(!confirm("一時停止を解除して、次のスキャンからメルカリの取得を再開しますか？"))return;const r=await (await post("/api/mercari-resume",{})).json();toast(r.message);load()}}];

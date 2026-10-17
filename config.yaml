@@ -15,7 +15,11 @@ app:
   chrome_profile_directory: null
   poll_interval_seconds: 900  # 15 minutes（CLIの loop 用）
   # 画面版の自動スキャン間隔（分）。0で止める。Macを閉じても動かすには pmset の設定も必要（README参照）
-  auto_scan_minutes: 15
+  auto_scan_minutes: 60
+  auto_scan_jitter: 0.2      # 間隔を毎回±20%ずらす
+  genres_per_scan: 5         # 1回に回すジャンル数（順番に回す。マスターは毎回）。メルカリへのアクセスを人の閲覧程度に
+  mercari_pause_hours: 3     # 403/429・人間確認・急な0件で一時停止（連続するたびに倍、最大24時間）
+  mercari_pause_max_hours: 24
   # live: 実サイト収集 / sample: 同梱サンプル / auto: 実サイトが0件ならサンプルで代替
   data_source: auto
   web_host: "127.0.0.1"

@@ -30,7 +30,14 @@ from .scrape_mercari import (
 
 
 async def fetch_html(page, url: str, *, scroll_steps: int = 0) -> str:
-    await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+    html, _ = await fetch_html_status(page, url, scroll_steps=scroll_steps)
+    return html
+
+
+async def fetch_html_status(page, url: str, *, scroll_steps: int = 0) -> tuple[str, Optional[int]]:
+    """HTMLと HTTPステータス（403/429 の検知用）を返す。"""
+    resp = await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+    status = resp.status if resp else None
     try:
         await page.wait_for_load_state("networkidle", timeout=25_000)
     except PlaywrightError:
@@ -43,14 +50,14 @@ async def fetch_html(page, url: str, *, scroll_steps: int = 0) -> str:
             await page.wait_for_timeout(450)
     except PlaywrightError:
         await asyncio.sleep(1.8)
-    return await page.content()
+    return await page.content(), status
 
 
 def detect_block(source: str, html: str, page_url: str = "") -> Optional[str]:
     h = html.lower()
     u = page_url.lower()
     if source == "mercari":
-        if "お使いのブラウザがwebサイトに対応" in html or "not supported" in h:
+        if "お使いのブラウザがwebサイトに対応" in h or "not supported" in h:
             return "Mercariが「ブラウザ非対応」ページを返しています（自動操作検知の可能性）"
     if source == "ebay":
         if "signin.ebay" in u or "splashui/captcha" in u:
@@ -105,6 +112,7 @@ async def open_session(cfg: Config):
         browser_channel=cfg.app.browser_channel,
         strip_playwright_automation_args=cfg.app.strip_playwright_automation_args,
         chrome_cdp_url=cfg.app.chrome_cdp_url,
+        block_resources=True,
     )
 
 
@@ -117,6 +125,8 @@ class LazySession:
     def __init__(self, cfg: Config, session=None) -> None:
         self.cfg, self.session = cfg, session
         self.error: Optional[Exception] = None
+        self.mercari_anomaly: Optional[str] = None  # 止められている兆候（あればスキャンを中断）
+        self.prev_mercari_count: dict[str, int] = {}  # ジャンルごとの前回の取得件数（急な0件の検知用）
 
     async def get(self):
         if self.error is not None:  # 一度起動に失敗したら同じスキャン中は再挑戦しない
@@ -176,9 +186,16 @@ async def _mercari_items(cfg: Config, target: Target, lazy: "LazySession") -> tu
             note = f"メルカリAPIで取得できなかったため、ブラウザで取得しました（{type(e).__name__}）"
     session = await lazy.get()
     url = build_mercari_search_url(target.mercari_query)
-    html = await fetch_html(session.page, url, scroll_steps=cfg.app.mercari_scroll_steps)
+    html, status = await fetch_html_status(session.page, url, scroll_steps=cfg.app.mercari_scroll_steps)
     items = parse_mercari_search_html(html)
     block = detect_block("mercari", html, session.page.url)
+    # 異常の検知（アクセスを止められている兆候）→ scan_all がメルカリ取得を一時停止する
+    if status in (403, 429) or (status and status >= 500):
+        lazy.mercari_anomaly = f"メルカリがHTTP {status} を返しました"
+    elif block or any(k in session.page.url for k in ("challenge", "captcha")):
+        lazy.mercari_anomaly = block or "メルカリで人間確認ページが表示されました"
+    elif not items and lazy.prev_mercari_count.get(target.id, 0) >= 10:
+        lazy.mercari_anomaly = f"前回{lazy.prev_mercari_count[target.id]}件あった検索が急に0件になりました"
     if not items:
         _save_debug(f"mercari_{target.id}", html)
         block = block or "Mercariの商品一覧を解析できませんでした（0件。検索語を見直すか、ページ構造が変わった可能性）"
@@ -450,12 +467,64 @@ def rank_target(
     return out, stats
 
 
+def select_targets(con, cfg: Config, *, rotate: bool) -> list[Target]:
+    """今回取得するジャンル。設定ジャンルは genres_per_scan 件ずつ順番に回し、マスターは毎回入れる。"""
+    genres = cfg.all_targets
+    n = cfg.app.genres_per_scan
+    if rotate and n and len(genres) > n:
+        start = int(db.get_setting(con, "rotation_index", "0") or 0) % len(genres)
+        genres = [genres[(start + i) % len(genres)] for i in range(n)]
+        db.set_setting(con, "rotation_index", (start + n) % len(cfg.all_targets))
+        con.commit()
+    return [*genres, *master_targets(con)]
+
+
+def _prev_counts(con) -> dict[str, int]:
+    rows = con.execute(
+        "SELECT s.target_id, COUNT(m.id) n FROM snapshots s LEFT JOIN mercari_listings m ON m.snapshot_id=s.id "
+        "WHERE s.source='mercari' AND s.id IN (SELECT MAX(id) FROM snapshots WHERE source='mercari' GROUP BY target_id) "
+        "GROUP BY s.target_id"
+    )
+    return {r["target_id"]: r["n"] for r in rows}
+
+
+def _pause_mercari(con, cfg: Config, reason: str) -> str:
+    strikes = int(db.get_setting(con, "mercari_strikes", "0") or 0) + 1
+    hours = min(cfg.app.mercari_pause_hours * (2 ** (strikes - 1)), cfg.app.mercari_pause_max_hours)
+    until = (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat(timespec="seconds")
+    db.set_setting(con, "mercari_strikes", strikes)
+    db.set_setting(con, "mercari_pause_until", until)
+    db.set_setting(con, "mercari_pause_reason", reason)
+    con.commit()
+    return until
+
+
+def _jst(iso: str) -> str:
+    try:
+        return datetime.fromisoformat(iso).astimezone(timezone(timedelta(hours=9))).strftime("%m/%d %H:%M")
+    except ValueError:
+        return iso
+
+
+def _alert(cfg: Config, text: str) -> None:
+    """運用アラート（取得停止など）を通知。失敗しても無視。"""
+    from .notify import get_notifier
+
+    n = get_notifier(cfg)
+    if n:
+        try:
+            n.send(text)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 async def scan_all(
     cfg: Config,
     *,
     data_source: Optional[str] = None,
     sort_by: str = "score",
     console: Optional[Console] = None,
+    rotate: bool = False,
 ) -> dict[str, Any]:
     """全ジャンルを1周して候補を作り、DBに保存して要約を返す。"""
     source = (data_source or cfg.app.data_source).lower()
@@ -467,9 +536,16 @@ async def scan_all(
     notes: list[dict[str, Any]] = []
     collected: list[tuple[Target, list[MercariListing], list[EbaySold]]] = []
 
-    targets = [*cfg.all_targets, *master_targets(con)]
+    targets = select_targets(con, cfg, rotate=rotate)
+    paused_until = db.get_setting(con, "mercari_pause_until")
+    paused = bool(paused_until and paused_until > db.utc_now_iso())
+    if source in ("live", "auto") and paused:
+        notes.append({"target": "メルカリ", "level": "warn",
+                      "message": f"アクセスを止められている兆候があったため、{_jst(paused_until)} まで取得を一時停止しています（画面の「ルール・前提」から再開できます）"})
+        targets = []
     if source in ("live", "auto") and targets:
         lazy = LazySession(cfg)
+        lazy.prev_mercari_count = _prev_counts(con)
         ebay_ok = True
         try:
             for t in targets:
@@ -487,12 +563,23 @@ async def scan_all(
                 if "ログイン" in eb or "拒否" in eb or "captcha" in eb:
                     ebay_ok = False
                 collected.append((t, res["mercari_items"], res["ebay_items"]))
+                if lazy.mercari_anomaly:
+                    # 止められている兆候：残りのジャンルは取得せず、一定時間メルカリへのアクセスを止める
+                    until = _pause_mercari(con, cfg, lazy.mercari_anomaly)
+                    notes.append({"target": "メルカリ", "level": "error",
+                                  "message": f"{lazy.mercari_anomaly}。{_jst(until)} まで取得を自動で止めます"})
+                    _alert(cfg, f"⚠️ メルカリの取得を一時停止しました：{lazy.mercari_anomaly}（{_jst(until)} まで）")
+                    break
+            else:
+                if collected:
+                    db.set_setting(con, "mercari_strikes", 0)
         finally:
             await lazy.close()
 
+    con.commit()
     used = source
     live_ok = any(m and e for _, m, e in collected)
-    if source == "sample" or (source == "auto" and not live_ok):
+    if source == "sample" or (source == "auto" and not live_ok and not paused):
         if source == "auto":
             notes.append({"target": "-", "level": "info", "message": "実サイトから相場を作れなかったため、サンプルデータで代替表示しています（上の警告を確認してください）"})
         used = "sample"
@@ -533,6 +620,7 @@ async def scan_all(
         (started, finished, used, json.dumps(summary, ensure_ascii=False)),
     )
     scan_id = int(cur.lastrowid)
+    con.executemany("INSERT OR IGNORE INTO scan_targets(scan_id, target_id) VALUES(?, ?)", [(scan_id, t.id) for t, _, _ in collected])
     con.executemany(
         "INSERT INTO candidates(scan_id, target_id, item_key, profit_jpy, roi, payload_json) VALUES(?, ?, ?, ?, ?, ?)",
         [
@@ -578,3 +666,134 @@ def render_ranking(console: Console, candidates: list[dict[str, Any]], *, limit:
             x["mercari_url"],
         )
     console.print(table)
+
+
+# ---------------------------------------------------------------- URLを貼って判定
+import re as _re
+
+_ITEM_ID_RE = _re.compile(r"(?:/item/|/shops/product/)([A-Za-z0-9]+)")
+
+
+def parse_mercari_item_html(html: str, url: str) -> Optional[MercariListing]:
+    """メルカリ商品ページ1件から、タイトル・価格・状態・画像を読む。"""
+    t = _re.search(r'<meta property="og:title" content="([^"]*)"', html)
+    p = _re.search(r'data-testid="price"[^>]*>.*?<span>([0-9,]+)</span>', html, _re.S) or _re.search(r'"price"\s*:\s*"?([0-9]+)', html)
+    if not t or not p:
+        return None
+    img = _re.search(r'<meta property="og:image" content="([^"]*)"', html)
+    text = _re.sub(r"<[^>]+>", " ", html)
+    cond = None
+    m = _re.search(r"商品の状態\s+(\S+)", text)
+    if m:
+        cond = next((k for k, v in CONDITION_LABELS.items() if v[:4] in m.group(1) or m.group(1)[:4] in v), None)
+        cond = cond or {"新品、未使用": 1, "未使用に近い": 2, "目立った傷や汚れなし": 3, "やや傷や汚れあり": 4, "傷や汚れあり": 5, "全体的に状態が悪い": 6}.get(m.group(1))
+    sold = "売り切れ" in text[:20000] and "購入手続きへ" not in text
+    mid = _ITEM_ID_RE.search(url)
+    return MercariListing(
+        title=_re.sub(r"\s*by メルカリ\s*$", "", t.group(1)).strip()[:200],
+        price_jpy=int(p.group(1).replace(",", "")),
+        shipping_included="送料込み" in text[:200000],
+        status="sold" if sold else "on_sale",
+        url=url.split("?")[0],
+        item_id=mid.group(1) if mid else url,
+        image_url=img.group(1) if img else None,
+        condition_id=cond,
+        is_shop="/shops/product/" in url,
+    )
+
+
+def _best_target(cfg: Config, con, title: str) -> tuple[Optional[Target], float]:
+    """タイトルに一番近いジャンル（ジャンルのeBay検索語・名前との照合）。"""
+    from .matching import match_score
+
+    best, score = None, 0.0
+    for t in [*cfg.all_targets, *master_targets(con)]:
+        sc = max(match_score(title, t.ebay_query), match_score(title, t.name))
+        if sc > score:
+            best, score = t, sc
+    return best, score
+
+
+async def evaluate_url(cfg: Config, url: str, *, target_id: Optional[str] = None) -> dict[str, Any]:
+    """メルカリの商品URLを1件読んで、相場・貢献利益・判定を返す（候補としても保存し、キュー・マスター登録に使える）。"""
+    if not _ITEM_ID_RE.search(url or ""):
+        return {"ok": False, "message": "メルカリの商品URL（https://jp.mercari.com/item/... または /shops/product/...）を貼ってください"}
+    fx_mod.apply(cfg)
+    plan = plan_mod.load(cfg)
+    con = db.connect(cfg.app.db_path)
+    db.migrate(con)
+    lazy = LazySession(cfg)
+    try:
+        session = await lazy.get()
+        html, status = await fetch_html_status(session.page, url.split("?")[0])
+        it = parse_mercari_item_html(html, url)
+        if not it:
+            return {"ok": False, "message": f"商品ページを読めませんでした（HTTP {status}）。URLを確認してください"}
+        targets = {t.id: t for t in [*cfg.all_targets, *master_targets(con)]}
+        target = targets.get(target_id or "")
+        fit = 1.0
+        if target is None:
+            target, fit = _best_target(cfg, con, it.title)
+        if target is None or fit < 0.3:
+            return {"ok": False, "need_target": True, "item": asdict(it),
+                    "message": "どのジャンルの商品か判定できませんでした。ジャンルを選んで再判定してください"}
+        # 相場：そのジャンルの成約データ（キャッシュがあれば使う。古くても使い、取得日を表示）
+        cached = _cached_ebay(con, target, 24 * 30)
+        ebay_items, ebay_at, note = [], None, None
+        if cached:
+            ebay_at, ebay_items = cached
+        else:
+            html_e, _ = await fetch_html_status(session.page, build_ebay_sold_url(target.ebay_query))
+            ebay_items = parse_ebay_sold_html(html_e, cfg.fx.jpy_per_usd)
+            note = detect_block("ebay", html_e, session.page.url) if not ebay_items else None
+        th = cfg.thresholds
+        comps = find_comps(it.title, ebay_items, title_of=lambda e: e.title, threshold=th.match_threshold)
+        market = market_price([c.item.total_usd for c in comps], min_samples=1)
+        reasons: list[str] = []
+        if it.status != "on_sale":
+            reasons.append("売り切れています")
+        if _is_excluded(cfg, target, it.title):
+            reasons.append("除外語に当たっています（付属品・ジャンク等）")
+        if market is None:
+            return {"ok": True, "item": asdict(it), "target": target.name, "verdict": "相場なし",
+                    "message": note or f"「{target.name}」のeBay成約データに、この商品と一致するものがありません（照合しきい値 {th.match_threshold}）",
+                    "reasons": reasons}
+        est = estimate_profit(cfg=cfg, target=target, buy_price_jpy=it.price_jpy, sell_total_usd=market,
+                              mercari_title=it.title, mercari_url=it.url)
+        cat_min = plan_mod.category_min_profit(plan or {}, target.category)
+        min_profit = target.min_profit_jpy if target.min_profit_jpy is not None else cat_min if cat_min is not None else th.min_profit_jpy
+        if len(comps) < th.min_comps:
+            reasons.append(f"一致する成約が{len(comps)}件だけで、相場の信頼性が低い")
+        if est.profit_jpy < min_profit:
+            reasons.append(f"貢献利益 ¥{est.profit_jpy:,} が下限 ¥{min_profit:,} 未満")
+        if est.roi < th.min_roi:
+            reasons.append(f"仕入ROI {est.roi:.0%} が下限 {th.min_roi:.0%} 未満")
+        if th.min_price_ratio and it.price_jpy < market * cfg.fx.jpy_per_usd * th.min_price_ratio:
+            reasons.append("相場に対して安すぎます（付属品・別物の疑い）")
+        cap = max_buy_for(cfg, target)
+        if cap and it.price_jpy > cap:
+            reasons.append(f"仕入れ上限 ¥{cap:,} を超えています")
+        cand = Candidate(
+            est=est, genre=target.genre_label, category=target.category, min_profit_jpy=min_profit,
+            item_key=it.item_id or it.url, market_usd=market, match_score=comps[0].score,
+            comps=[{"title": c.item.title, "total_usd": c.item.total_usd, "url": c.item.url, "score": c.score} for c in comps[:5]],
+            comps_count=len(comps), shipping_included=it.shipping_included, first_seen=db.utc_now_iso(), is_new=False,
+            image_url=it.image_url, ebay_sold_search_url=build_ebay_sold_url(target.ebay_query),
+            ebay_research_url=build_ebay_research_url(target.ebay_query), mercari_similar_url=build_mercari_keyword_url(target.mercari_query),
+            near_miss=bool(reasons), condition=CONDITION_LABELS.get(it.condition_id) if it.condition_id else None,
+            is_shop=it.is_shop, demand_count=len(ebay_items), is_master=target.is_master,
+        )
+        d = cand.to_dict()
+        # 「キューへ」「マスター登録」が使えるよう、手動判定のスキャンとして保存
+        now = db.utc_now_iso()
+        cur = con.execute("INSERT INTO scans(started_at, finished_at, data_source, summary_json) VALUES(?, ?, 'manual', ?)",
+                          (now, now, json.dumps({"url": url}, ensure_ascii=False)))
+        con.execute("INSERT INTO candidates(scan_id, target_id, item_key, profit_jpy, roi, payload_json) VALUES(?, ?, ?, ?, ?, ?)",
+                    (int(cur.lastrowid), target.id, cand.item_key, est.profit_jpy, est.roi, json.dumps(d, ensure_ascii=False)))
+        con.commit()
+        return {"ok": True, "target": target.name, "fit": round(fit, 2), "ebay_at": ebay_at, "candidate": d,
+                "verdict": "仕入れ候補" if not reasons else ("条件付き" if est.profit_jpy > 0 else "見送り"),
+                "reasons": reasons}
+    finally:
+        await lazy.close()
+        con.close()

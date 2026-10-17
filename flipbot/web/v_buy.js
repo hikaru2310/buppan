@@ -131,18 +131,43 @@ function sortSeg(){
   return `<div class="seg">${[["score","総合"],["profit","貢献利益"],["roi","仕入ROI"]].map(([k,l])=>`<button data-sort="${k}" class="${sortBy===k?"on":""}">${l}</button>`).join("")}</div>`;
 }
 
+// ---- URLを貼って判定
+let evalRes=null, evalBusy=false;
+function evalBox(){
+  const g=[...(S.rules.config_genres||[]),...(S.watch||[]).filter(w=>w.active).map(w=>({id:"m"+w.id,name:"★"+w.label}))];
+  const r=evalRes, c=r?.candidate;
+  const vcls={"仕入れ候補":"ok","条件付き":"warn","見送り":"alert","相場なし":"na"}[r?.verdict]||"na";
+  return `<div class="card" style="padding:14px 18px;margin:12px 0">
+    <div class="form-inline"><label style="flex:1">メルカリの商品URLを貼って判定（アプリの新着通知で気になった出品など）<input id="evalUrl" class="w2" style="width:100%" placeholder="https://jp.mercari.com/item/m..." value="${esc(r?.url||"")}"></label>
+      <label>ジャンル<select id="evalTarget"><option value="">自動で判定</option>${g.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("")}</select></label>
+      <button class="btn dark" id="evalBtn" ${evalBusy?"disabled":""}>${evalBusy?'<span class="spin"></span>判定中…':"判定する"}</button></div>
+    ${r?(r.ok===false?`<div class="note">${esc(r.message)}</div>`:`<div style="margin-top:10px"><span class="badge ${vcls}">${esc(r.verdict)}</span> <b>${esc(r.target||"")}</b>
+      ${r.ebay_at?`<span class="meta">（相場は ${dtfmt(r.ebay_at)} 取得の成約データ）</span>`:""}
+      ${(r.reasons||[]).length?`<ul style="margin:6px 0 0;padding-left:18px">${r.reasons.map(x=>`<li class="mini">${esc(x)}</li>`).join("")}</ul>`:""}
+      ${r.message?`<div class="note">${esc(r.message)}</div>`:""}</div>
+      ${c?`<div style="margin-top:8px">${candRows([c],{compact:false})}</div>`:""}`):""}</div>`;
+}
+async function runEval(){
+  const url=$("#evalUrl").value.trim(); if(!url){toast("URLを貼ってください");return}
+  evalBusy=true; evalRes=null; render();
+  try{evalRes=await (await post("/api/evaluate",{url,target_id:$("#evalTarget").value})).json(); evalRes.url=url}catch(e){evalRes={ok:false,message:"判定できませんでした"}}
+  evalBusy=false; if(evalRes.candidate) open.add(evalRes.candidate.item_key); load();
+}
+
 VIEWS.cands=["実務1 仕入れ / 仕入れ候補",()=>{
   const genres=[...new Set(active().map(c=>c.genre))], nearN=active().filter(c=>c.near_miss).length;
   const notes=(S.summary.notes||[]);
   return h1("貢献利益順に並んだ、今日ポチる候補。",
     "総合＝貢献利益×照合度×需要（成約件数）。意思決定ログ「ROIだけでなく利益額・売却確率・在庫日数を重視」に合わせています。下限利益は計画シートのカテゴリ別基準です。")
+  + evalBox()
   + chips()
+  + (S.mercari_pause?.active?`<div class="note"><b>メルカリの取得を一時停止中</b>（${dtfmt(S.mercari_pause.until)} まで）：${esc(S.mercari_pause.reason||"")}。<a href="#" data-go="rules">ルール・前提</a>から再開できます。</div>`:"")
   + (notes.some(n=>/ログイン|拒否|captcha/.test(n.message))||S.logging_in?`<div class="card notes" style="margin:10px 0">${loginBox()}</div>`:"")
   + `<div class="toolbar" style="margin-top:14px">${sortSeg()}
     <select id="genreSel"><option value="">すべてのジャンル</option>${genres.map(g=>`<option ${g===genre?"selected":""}>${esc(g)}</option>`).join("")}</select>
     <label class="chk"><input type="checkbox" id="nearChk" ${showNear?"checked":""}> 惜しい候補も表示（基準未満だが黒字：${nearN}件）</label></div>
   <div class="card">${candRows(filtered())}</div>`;
-}];
+},()=>{const b=$("#evalBtn"); if(b) b.onclick=runEval; const u=$("#evalUrl"); if(u) u.onkeydown=e=>{if(e.key==="Enter")runEval()}}];
 
 const PALETTE=["#3b4a8c","#2f7a4f","#b07a12","#b3412f","#6b5ca5","#2c7f86"];
 VIEWS.map=["実務1 仕入れ / 収益機会マップ",()=>{
@@ -203,6 +228,13 @@ VIEWS.dismissed=["実務1 仕入れ / 見送りリスト",()=>{
     :'<div class="empty">見送った出品はありません。</div>'}</div>`;
 }];
 
+// メルカリの検索URL（販売中・指値以下・新着順）。スマホで開いて「検索条件を保存」すると公式の新着通知が届く
+function savedSearchUrl(x){
+  const q=new URLSearchParams({keyword:x.mercari_query,status:"on_sale",sort:"created_time",order:"desc"});
+  if(x.max_buy_jpy) q.set("price_max",x.max_buy_jpy);
+  if(x.exclude) q.set("exclude_keyword",x.exclude);
+  return "https://jp.mercari.com/search?"+q.toString();
+}
 VIEWS.master=["実務1 仕入れ / マスター（継続仕入れ）",()=>{
   const w=S.watch||[], hits=id=>S.candidates.filter(c=>c.target_id==="m"+id&&!c.near_miss);
   return h1("当たり商品を、指値で待ち伏せする。","一度仕入れて利益が出た商品（または確実に利益が出る型番）を、指値と実送料つきで登録します。自動スキャンのたびに監視し、指値以下の新着が出たら候補の先頭に★付きで出して通知します（0001_sedoriの「マスター登録→定点監視」を統合）。")
@@ -210,7 +242,8 @@ VIEWS.master=["実務1 仕入れ / マスター（継続仕入れ）",()=>{
      <span class="chip">通知 <b>${S.settings?.notify_configured?"Slack設定済み":"未設定（ルール・前提で設定）"}</b></span></div>`
   + h2("· 01","登録済みマスター")
   + (w.length?`<div class="card"><div class="wide"><table><thead><tr><th>名前・検索語</th><th class="num">指値</th><th class="num">実送料</th><th class="num">下限利益</th><th class="num">今のヒット</th><th>状態</th><th></th></tr></thead><tbody>
-    ${w.map(x=>`<tr><td class="wrap"><b>${esc(x.label)}</b><div class="meta">${esc(x.category||"")} ・ メルカリ「${esc(x.mercari_query)}」 ・ eBay「${esc(x.ebay_query)}」${x.exclude?` ・ 除外「${esc(x.exclude)}」`:""}</div></td>
+    ${w.map(x=>`<tr><td class="wrap"><b>${esc(x.label)}</b><div class="meta">${esc(x.category||"")} ・ メルカリ「${esc(x.mercari_query)}」 ・ eBay「${esc(x.ebay_query)}」${x.exclude?` ・ 除外「${esc(x.exclude)}」`:""}</div>
+      <div class="mini"><a href="${esc(savedSearchUrl(x))}" target="_blank" rel="noopener">メルカリで同じ条件を開く ↗</a> <span class="meta">→ アプリなら検索結果の「検索条件を保存」で新着通知</span></div></td>
       <td class="num">${yen(x.max_buy_jpy)}</td><td class="num">${yen(x.shipping_jpy)}</td><td class="num">${x.min_profit_jpy!=null?yen(x.min_profit_jpy):"カテゴリ基準"}</td>
       <td class="num">${hits(x.id).length?`<a href="#" data-go="cands"><b>${hits(x.id).length}件</b></a>`:"0"}</td>
       <td>${x.active?'<span class="badge ok">監視中</span>':'<span class="badge na">停止</span>'}</td>

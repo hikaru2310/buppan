@@ -87,12 +87,28 @@ class AppState:
     def start_scan(self) -> bool:
         def scan() -> None:
             try:
-                asyncio.run(scan_all(self.cfg, data_source=self.source, sort_by="score"))
+                asyncio.run(scan_all(self.cfg, data_source=self.source, sort_by="score", rotate=True))
                 self.last_error = None
             except Exception as e:  # noqa: BLE001 - 画面に出す
                 self.last_error = repr(e)
 
         return self._run_bg("scan", scan)
+
+    def evaluate(self, url: str, target_id: Optional[str]) -> dict[str, Any]:
+        """URLを貼って判定。ブラウザのプロファイルは同時に1つしか開けないので、スキャン中は待ってもらう。"""
+        from .pipeline import evaluate_url
+
+        with self.lock:
+            if self.busy:
+                return {"ok": False, "message": "スキャン中・ログイン中のため、終わってからもう一度お試しください"}
+            self.busy = "evaluate"
+        try:
+            return asyncio.run(evaluate_url(self.cfg, url, target_id=target_id or None))
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "message": f"判定できませんでした: {e!r}"}
+        finally:
+            with self.lock:
+                self.busy = None
 
     def start_login(self) -> bool:
         def login() -> None:
@@ -115,14 +131,31 @@ class AppState:
         cfg = self.cfg
         con = self._con()
         try:
-            row = con.execute("SELECT id, summary_json FROM scans ORDER BY id DESC LIMIT 1").fetchone()
+            row = con.execute("SELECT id, data_source, summary_json FROM scans WHERE data_source!='manual' ORDER BY id DESC LIMIT 1").fetchone()
             summary: dict[str, Any] = json.loads(row["summary_json"]) if row else {}
             cands = []
             if row:
-                cands = [
-                    json.loads(r["payload_json"])
-                    for r in con.execute("SELECT payload_json FROM candidates WHERE scan_id=? ORDER BY id", (row["id"],))
-                ]
+                # ジャンルを順番に回すので、ジャンルごとに「最後に取得したスキャン」の候補を集める
+                for r in con.execute(
+                    "SELECT c.payload_json, s.finished_at FROM candidates c "
+                    "JOIN (SELECT st.target_id, MAX(st.scan_id) sid FROM scan_targets st JOIN scans s2 ON s2.id=st.scan_id "
+                    "      WHERE s2.data_source=? GROUP BY st.target_id) m ON c.target_id=m.target_id AND c.scan_id=m.sid "
+                    "JOIN scans s ON s.id=c.scan_id ORDER BY c.id",
+                    (row["data_source"],),
+                ):
+                    p = json.loads(r["payload_json"])
+                    p["scanned_at"] = r["finished_at"]
+                    cands.append(p)
+                if not cands and not con.execute("SELECT 1 FROM scan_targets LIMIT 1").fetchone():
+                    # 旧形式（scan_targets がない頃）のスキャン
+                    cands = [json.loads(r["payload_json"]) for r in con.execute("SELECT payload_json FROM candidates WHERE scan_id=? ORDER BY id", (row["id"],))]
+                live_ids = {t.id for t in cfg.all_targets} | {f"m{r['id']}" for r in con.execute("SELECT id FROM watch_items WHERE active=1")}
+                if row["data_source"] != "sample":
+                    cands = [c for c in cands if c.get("target_id") in live_ids]
+            pause_until = db.get_setting(con, "mercari_pause_until")
+            pause = {"until": pause_until, "reason": db.get_setting(con, "mercari_pause_reason"),
+                     "strikes": int(db.get_setting(con, "mercari_strikes", "0") or 0),
+                     "active": bool(pause_until and pause_until > db.utc_now_iso())}
             history = [
                 {"finished_at": r["finished_at"], **json.loads(r["summary_json"]).get("stats", {})}
                 for r in con.execute("SELECT finished_at, summary_json FROM scans ORDER BY id DESC LIMIT 14")
@@ -157,14 +190,17 @@ class AppState:
             "env": env,
             "costs": cfg.costs.model_dump(),
             "watch": watch,
+            "mercari_pause": pause,
             "settings": {
                 "mercari_source": cfg.app.mercari_source,
                 "notify_configured": bool(cfg.notify.slack_webhook_url),
                 "notify": {k: v for k, v in cfg.notify.model_dump().items() if k != "slack_webhook_url"},
                 "category_excludes": cfg.category_excludes,
                 "auto_scan_minutes": cfg.app.auto_scan_minutes,
+                "genres_per_scan": cfg.app.genres_per_scan,
             },
             "scanning": self.busy == "scan",
+            "evaluating": self.busy == "evaluate",
             "next_scan_at": self.next_scan_at,
             "logging_in": self.busy == "login",
             "login_result": self.login_result,
@@ -442,6 +478,8 @@ def _make_handler(state: AppState):
             elif path == "/api/watch":
                 ok, msg = state.save_watch(body)
                 self._json({"ok": ok, "message": msg}, 200 if ok else 400)
+            elif path == "/api/evaluate":
+                self._json(state.evaluate(str(body.get("url", "")).strip(), body.get("target_id")))
             elif path == "/api/notify-test":
                 from .notify import send_test
 
@@ -452,6 +490,10 @@ def _make_handler(state: AppState):
                     if k in body:
                         state.set_setting(k, body[k])
                 self._json({"ok": True})
+            elif path == "/api/mercari-resume":
+                state.set_setting("mercari_pause_until", "")
+                state.set_setting("mercari_strikes", 0)
+                self._json({"ok": True, "message": "メルカリの取得を再開しました（次のスキャンから）"})
             else:
                 self._send(404, b"not found", "text/plain")
 
@@ -472,16 +514,21 @@ def _make_handler(state: AppState):
 
 
 def _auto_scan_loop(state: "AppState", interval: int) -> None:
-    """一定間隔で自動スキャン。スキャン中・eBayログイン中なら次の回に回す。"""
+    """一定間隔で自動スキャン。間隔は毎回±揺らぐ。スキャン中・eBayログイン中なら次の回に回す。"""
+    import random
     import time
 
-    state.next_scan_at = time.time() + interval
+    def nxt() -> float:
+        j = max(0.0, min(state.cfg.app.auto_scan_jitter, 0.9))
+        return time.time() + interval * random.uniform(1 - j, 1 + j)
+
+    state.next_scan_at = nxt()
     while True:
         time.sleep(max(state.next_scan_at - time.time(), 5))
         if not state.start_scan():
             state.next_scan_at = time.time() + 60  # 使用中なら1分後に再挑戦
             continue
-        state.next_scan_at = time.time() + interval
+        state.next_scan_at = nxt()
 
 
 def serve(cfg_path: str, *, source: Optional[str] = None, port: Optional[int] = None, initial_scan: bool = True) -> int:

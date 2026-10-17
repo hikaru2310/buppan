@@ -31,6 +31,7 @@ async def open_page(
     browser_channel: Optional[str] = None,
     strip_playwright_automation_args: bool = True,
     chrome_cdp_url: Optional[str] = None,
+    block_resources: bool = False,
 ) -> BrowserSession:
     pw = await async_playwright().start()
     ignore_default_args = (
@@ -113,6 +114,16 @@ async def open_page(
         context = await browser.new_context(**ctx_kwargs)
         await context.add_init_script(_STEALTH_INIT_SCRIPT)
         page = await context.new_page()
+
+    if block_resources:
+        # 画像・動画・フォントは読み込まない（相手サーバーの負荷と通信量を減らす。画像URLはHTML内に残る）
+        async def _block(route):
+            if route.request.resource_type in ("image", "media", "font"):
+                await route.abort()
+            else:
+                await route.continue_()
+
+        await context.route("**/*", _block)
 
     # The playwright driver is tied to the browser lifetime.
     # We attach it to the browser object so closing browser closes everything.
