@@ -168,6 +168,11 @@ class AppConfig(BaseModel):
     backup_dir: Optional[str] = None
     # 売れてから発送までの社内期限（日）
     handling_days: int = 3
+    # eBay相場の取り方: manual = 普段のChromeから「Arbiterへ送る」で取り込む（ツールはeBayに自動アクセスしない・既定）
+    #                    auto   = ツール用ブラウザで自動取得（eBayに自動操作として拒否されやすく、アカウントのリスクあり）
+    ebay_fetch: str = "manual"
+    # 手動で取り込んだ相場を使う日数
+    ebay_manual_days: float = 7
     # eBayのログイン用メールアドレス（ログイン画面に自動で入力。パスワードは扱わない）。config.local.yaml に書く
     ebay_login_email: Optional[str] = None
     # スキャンでeBayのログイン切れを検知したら、ログイン画面を自動で開く（この時間に1回まで）

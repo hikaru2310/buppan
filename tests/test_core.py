@@ -157,6 +157,25 @@ def test_ebay_csv_import():
     assert con.execute("SELECT fees_usd FROM skus WHERE sku=?", (sku,)).fetchone()[0] == 58.13
 
 
+def test_manual_ebay_import_and_cache():
+    from flipbot.pipeline import _cached_ebay, ebay_import_status, import_ebay_page
+    cfg = make_cfg()
+    con = con_for(cfg)
+    t = cfg.all_targets[0]
+    html = "".join(f'<li class="s-card"><div class="s-card__caption">Sold  Oct {i + 1}, 2026</div><div class="s-card__title">{t.ebay_query} #{i}</div>'
+                   f'<div class="s-card__subtitle">Pre-Owned</div><a href="https://www.ebay.com/itm/{i}">x</a><span class="s-card__price">${200 + i}.00</span></li>' for i in range(8))
+    url = f"https://www.ebay.com/sch/i.html?_nkw={t.ebay_query.replace(' ', '+')}&LH_Sold=1&LH_Complete=1"
+    assert not import_ebay_page(cfg, html, url.replace("&LH_Sold=1", ""))["ok"], "売れた商品のページ以外は弾く"
+    r = import_ebay_page(cfg, f"<ul>{html}</ul>", url)
+    assert r["ok"] and r["target_id"] == t.id and r["count"] == 8, r
+    got = _cached_ebay(con, t, cfg.app.ebay_cache_hours, cfg.app.ebay_manual_days)
+    assert got and len(got[1]) == 8 and got[1][0].sold_date, "手動で取り込んだ相場を使う"
+    st = {x["id"]: x for x in ebay_import_status(cfg, con)}
+    assert st[t.id]["fresh"] and not st[cfg.all_targets[1].id]["fresh"]
+    r2 = import_ebay_page(cfg, f"<ul>{html}</ul>", "https://www.ebay.com/sch/i.html?_nkw=zzzz+unknown&LH_Sold=1")
+    assert r2.get("need_target"), "一致するジャンルがなければ選ばせる"
+
+
 def test_listing_draft():
     d = listing.draft({"sku": "2610-001", "title": "Nikon F3", "category": "カメラ・交換レンズ", "payload_json": json.dumps(_payload())})
     assert d["title"].startswith("[Exc+5]") and len(d["title"]) <= 80 and "Excellent" not in d["title"]

@@ -175,6 +175,7 @@ VIEWS.cands=["実務1 仕入れ / 仕入れ候補",()=>{
   const notes=(S.summary.notes||[]);
   return h1("貢献利益順に並んだ、今日ポチる候補。",
     "総合＝貢献利益×照合度×需要（成約件数）。意思決定ログ「ROIだけでなく利益額・売却確率・在庫日数を重視」に合わせています。下限利益は計画シートのカテゴリ別基準です。")
+  + (S.settings?.ebay_fetch==="manual"&&(S.ebay_status||[]).some(x=>!x.fresh)?`<div class="note">eBayの相場が未取り込み・期限切れのジャンルが <b>${(S.ebay_status||[]).filter(x=>!x.fresh).length}件</b> あります。そのジャンルの候補は出ません → <a href="#" data-go="ebayimp">eBay相場の取り込み</a></div>`:"")
   + evalBox()
   + chips()
   + (S.mercari_pause?.active?`<div class="note"><b>メルカリの取得を一時停止中</b>（${dtfmt(S.mercari_pause.until)} まで）：${esc(S.mercari_pause.reason||"")}。<a href="#" data-go="rules">ルール・前提</a>から再開できます。</div>`:"")
@@ -273,4 +274,32 @@ VIEWS.master=["実務1 仕入れ / マスター（継続仕入れ）",()=>{
 },()=>{
   $$("[data-mtoggle]").forEach(b=>b.onclick=async()=>{await post("/api/watch",{id:b.dataset.mtoggle,active:b.dataset.on});load()});
   $$("[data-mdel]").forEach(b=>b.onclick=async()=>{if(!confirm("このマスターを削除しますか？"))return;await fetch("/api/watch?id="+b.dataset.mdel,{method:"DELETE"});load()});
+}];
+
+
+// ---- eBay相場の取り込み（普段のChromeから送る）
+const BOOKMARKLET="javascript:(()=>{const O='http://127.0.0.1:8000';if(!/LH_Sold=1/.test(location.search)){alert('eBayの「売れた商品」の検索結果ページで押してください');return}const w=window.open(O+'/#ebay','arbiter');if(!w){alert('ポップアップを許可してください');return}const d={type:'arbiter-ebay-page',html:document.documentElement.outerHTML,url:location.href};let n=0;const iv=setInterval(()=>{n++;try{w.postMessage(d,O)}catch(e){}if(n>50)clearInterval(iv)},300);window.addEventListener('message',e=>{if(e.data&&e.data.type==='arbiter-ack')clearInterval(iv)})})()";
+VIEWS.ebayimp=["実務1 仕入れ / eBay相場の取り込み",()=>{
+  const st=S.ebay_status||[], stale=st.filter(x=>!x.fresh), r=ebayLast;
+  return h1("eBayの相場は、普段のChromeから送る。",`ツールはeBayに自動でアクセスしません（自動操作として拒否され、セラーアカウントにリスクがあるため）。ログイン済みの普段のChromeで「売れた商品」のページを開き、ブックマークの「Arbiterへ送る」を押すと、そのジャンルの相場として取り込みます。相場は${S.settings?.ebay_manual_days||7}日間使い、期限が切れたら更新します。`)
+  + `<div class="card" style="padding:14px 18px"><b>最初に1回だけ：ブックマークを登録</b>
+      <div class="pv" style="margin-top:8px"><a class="btn dark" href="${esc(BOOKMARKLET)}" onclick="event.preventDefault();toast('このボタンをブックマークバーまでドラッグしてください')">Arbiterへ送る</a>
+      <span class="meta">← このボタンを、Chromeのブックマークバーへドラッグして登録します（ブックマークバーが出ていなければ ⌘⇧B）。</span></div>
+      <div class="meta" style="margin-top:6px">使い方：下の「売れた商品を開く」→ 普段のChromeでページが開く → 一覧が表示されたらブックマークの「Arbiterへ送る」を押す → この画面に結果が出ます。</div></div>`
+  + (r?`<div class="note"><b>${r.ok?"取り込みました":"取り込めませんでした"}</b>：${esc(r.message)}
+      ${r.need_target?`<div class="form-inline" style="margin-top:6px"><select id="impTarget">${(r.genres||[]).map(g=>`<option value="${esc(g.id)}">${esc(g.name)}</option>`).join("")}</select><button class="btn dark sm" id="impRetry">このジャンルとして取り込む</button></div>`:""}</div>`:"")
+  + h2("· 01","ジャンルごとの取り込み状況",`期限切れ・未取り込み ${stale.length} / ${st.length}件`)
+  + `<div class="card"><div class="wide"><table><thead><tr><th>ジャンル</th><th>eBay検索語</th><th class="num">件数</th><th>最終取り込み</th><th>状態</th><th></th></tr></thead><tbody>
+    ${st.map(x=>`<tr><td><b>${esc(x.name)}</b><div class="meta">${esc(x.category||"")}</div></td><td class="mini">${esc(x.ebay_query)}</td><td class="num">${x.count||"—"}</td>
+      <td class="mini">${x.captured_at?dtfmt(x.captured_at)+`（${x.age_days}日前）`:"—"}</td>
+      <td>${x.fresh?'<span class="badge ok">使用中</span>':x.captured_at?'<span class="badge warn">期限切れ</span>':'<span class="badge alert">未取り込み</span>'}</td>
+      <td class="num"><a class="btn sm ${x.fresh?"":"dark"}" href="${esc(x.sold_url)}" target="_blank" rel="noopener">売れた商品を開く ↗</a></td></tr>`).join("")}
+    </tbody></table></div></div>`
+  + h2("· 02","ブックマークが使えないとき","ページを保存（⌘S・「ウェブページ、完全」ではなく「HTMLのみ」）してアップロード")
+  + `<div class="card" style="padding:14px 18px"><div class="form-inline"><input type="file" id="impFile" accept=".html,.htm"><label>ジャンル<select id="impFileTarget"><option value="">検索語から自動判定</option>${st.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("")}</select></label><label>ページのURL（自動判定用・任意）<input id="impUrl" class="w2" placeholder="https://www.ebay.com/sch/i.html?_nkw=...&LH_Sold=1"></label><button class="btn" id="impUpload">取り込む</button></div></div>`;
+},()=>{
+  const rt=$("#impRetry"); if(rt) rt.onclick=async()=>{const t=$("#impTarget").value; const r=await (await post("/api/ebay-page",{html:ebayLast.html,url:ebayLast.url,target_id:t})).json(); ebayLast={...r,html:ebayLast.html,url:ebayLast.url}; toast(r.message); load()};
+  const up=$("#impUpload"); if(up) up.onclick=()=>{const f=$("#impFile").files[0]; if(!f){toast("HTMLファイルを選んでください");return}
+    const rd=new FileReader(); rd.onload=async()=>{const t=$("#impFileTarget").value; const url=$("#impUrl").value||((S.ebay_status||[]).find(x=>x.id===t)||{}).sold_url||"LH_Sold=1";
+      const r=await (await post("/api/ebay-page",{html:rd.result,url,target_id:t})).json(); ebayLast={...r,html:rd.result,url}; toast(r.message); load()}; rd.readAsText(f)};
 }];

@@ -87,10 +87,8 @@ def detect_block(source: str, html: str, page_url: str = "") -> Optional[str]:
     return None
 
 
-def _cached_ebay(con, target: Target, max_age_hours: float) -> Optional[tuple[str, list[EbaySold], Optional[int]]]:
+def _cached_ebay(con, target: Target, max_age_hours: float, manual_days: float = 7) -> Optional[tuple[str, list[EbaySold], Optional[int]]]:
     """直近の eBay 成約データが新しければ再利用（Sold相場は数時間で大きく変わらない）。"""
-    if max_age_hours <= 0:
-        return None
     row = con.execute(
         "SELECT s.id, s.captured_at, s.meta_json FROM snapshots s WHERE s.target_id=? AND s.source='ebay' "
         "AND EXISTS (SELECT 1 FROM ebay_sold e WHERE e.snapshot_id=s.id) ORDER BY s.id DESC LIMIT 1",
@@ -98,6 +96,13 @@ def _cached_ebay(con, target: Target, max_age_hours: float) -> Optional[tuple[st
     ).fetchone()
     if not row:
         return None
+    try:
+        meta = json.loads(row["meta_json"] or "{}")
+    except ValueError:
+        meta = {}
+    # 手動で取り込んだ相場（普段のChromeから送ったページ）は manual_days 日まで使う
+    if meta.get("manual"):
+        max_age_hours = max(max_age_hours, manual_days * 24)
     age = datetime.now(timezone.utc) - datetime.fromisoformat(row["captured_at"])
     if age > timedelta(hours=max_age_hours):
         return None
@@ -106,11 +111,7 @@ def _cached_ebay(con, target: Target, max_age_hours: float) -> Optional[tuple[st
                  condition=r["condition"], sold_date=r["sold_date"])
         for r in con.execute("SELECT * FROM ebay_sold WHERE snapshot_id=?", (row["id"],))
     ]
-    try:
-        active = json.loads(row["meta_json"] or "{}").get("active_count")
-    except ValueError:
-        active = None
-    return row["captured_at"], items, active
+    return row["captured_at"], items, meta.get("active_count")
 
 
 def _save_debug(name: str, html: str) -> None:
@@ -293,10 +294,14 @@ async def crawl_target_once(cfg: Config, target: Target, session=None, *, fetch_
         # eBay sold（キャッシュが新しければ再利用してアクセスを減らす）
         ebay_url = build_ebay_sold_url(target.ebay_query)
         ebay_block: Optional[str] = None
-        cached = _cached_ebay(con, target, cfg.app.ebay_cache_hours)
+        cached = _cached_ebay(con, target, cfg.app.ebay_cache_hours, cfg.app.ebay_manual_days)
         active_count: Optional[int] = None
         if cached:
             ebay_cached_at, ebay_items, active_count = cached
+        elif cfg.app.ebay_fetch == "manual":
+            # eBayには自動でアクセスしない（普段のChromeから「Arbiterへ送る」で取り込んだ相場だけを使う）
+            ebay_cached_at, ebay_items = None, []
+            ebay_block = "このジャンルのeBay相場が未取り込みか、期限切れです（「eBay相場の取り込み」画面から普段のChromeで送ってください）"
         elif not fetch_ebay:
             # 既にブロックされているので、同じスキャン中は eBay に繰り返しアクセスしない
             ebay_cached_at, ebay_items = None, []
@@ -837,10 +842,12 @@ async def evaluate_url(cfg: Config, url: str, *, target_id: Optional[str] = None
             return {"ok": False, "need_target": True, "item": asdict(it),
                     "message": "どのジャンルの商品か判定できませんでした。ジャンルを選んで再判定してください"}
         # 相場：そのジャンルの成約データ（キャッシュがあれば使う。古くても使い、取得日を表示）
-        cached = _cached_ebay(con, target, 24 * 30)
+        cached = _cached_ebay(con, target, 24 * 30, cfg.app.ebay_manual_days)
         ebay_items, ebay_at, note, active_count = [], None, None, None
         if cached:
             ebay_at, ebay_items, active_count = cached
+        elif cfg.app.ebay_fetch == "manual":
+            note = f"「{target.name}」のeBay相場が未取り込みです。「eBay相場の取り込み」画面から、普段のChromeで売れた商品のページを送ってください"
         else:
             html_e, _ = await fetch_html_status(session.page, build_ebay_sold_url(target.ebay_query))
             ebay_items = parse_ebay_sold_html(html_e, cfg.fx.jpy_per_usd)
@@ -903,3 +910,70 @@ async def evaluate_url(cfg: Config, url: str, *, target_id: Optional[str] = None
     finally:
         await lazy.close()
         con.close()
+
+
+
+# ---------------------------------------------------------------- eBay相場の手動取り込み（普段のChromeから送ったページ）
+def _query_of(url: str) -> str:
+    from urllib.parse import parse_qs, urlparse
+
+    return (parse_qs(urlparse(url).query).get("_nkw") or [""])[0]
+
+
+def import_ebay_page(cfg: Config, html: str, url: str, target_id: Optional[str] = None) -> dict[str, Any]:
+    """eBayの「売れた商品」検索ページのHTMLを取り込み、そのジャンルの相場として保存する。"""
+    from .matching import match_score
+
+    con = db.connect(cfg.app.db_path)
+    db.migrate(con)
+    try:
+        if "LH_Sold=1" not in url and "LH_Sold%3D1" not in url and "LH_Sold" not in url:
+            return {"ok": False, "message": "「売れた商品（Sold）」の検索結果ページではありません。左の絞り込みで「売れた商品」を選んでから送ってください"}
+        items = parse_ebay_sold_html(html, cfg.fx.jpy_per_usd)
+        if not items:
+            return {"ok": False, "message": "ページから売れた商品を読み取れませんでした（ログイン切れ・検索結果0件・ページの読み込み途中の可能性）"}
+        q = _query_of(url)
+        genres = [*active_genres(con, cfg), *master_targets(con)]
+        target = next((t for t in genres if t.id == target_id), None)
+        if target is None:
+            exact = [t for t in genres if t.ebay_query.lower().strip() == q.lower().strip()]
+            if exact:
+                target = exact[0]
+            else:
+                best = max(genres, key=lambda t: match_score(q, t.ebay_query), default=None)
+                if best is not None and match_score(q, best.ebay_query) >= 0.8:
+                    target = best
+        if target is None:
+            return {"ok": False, "need_target": True, "query": q, "count": len(items),
+                    "genres": [{"id": t.id, "name": t.name} for t in genres],
+                    "message": f"検索語「{q}」に一致するジャンルがありません。どのジャンルの相場か選んでください"}
+        db.upsert_target(con, target.id, target.name)
+        snap = db.create_snapshot(con, target_id=target.id, source="ebay", meta_json=json.dumps(
+            {"url": url, "manual": True, "sold_total": parse_result_count(html)}, ensure_ascii=False))
+        con.executemany(
+            "INSERT INTO ebay_sold(snapshot_id, title, price_usd, shipping_usd, total_usd, url, ended_at, condition, sold_date) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [(snap.id, i.title, i.price_usd, i.shipping_usd, i.total_usd, i.url, None, i.condition, i.sold_date) for i in items],
+        )
+        con.commit()
+        prices = sorted(i.total_usd for i in items)
+        return {"ok": True, "target": target.name, "target_id": target.id, "count": len(items),
+                "median_usd": prices[len(prices) // 2],
+                "message": f"「{target.name}」の相場として {len(items)}件を取り込みました（中央値 ${prices[len(prices) // 2]:.0f}）。次のスキャンから使います"}
+    finally:
+        con.close()
+
+
+def ebay_import_status(cfg: Config, con) -> list[dict[str, Any]]:
+    """ジャンルごとの eBay 相場の取り込み状況（最終取り込み・件数・期限）。"""
+    out = []
+    for t in [*active_genres(con, cfg), *master_targets(con)]:
+        row = con.execute(
+            "SELECT s.captured_at, s.meta_json, (SELECT COUNT(*) FROM ebay_sold e WHERE e.snapshot_id=s.id) n FROM snapshots s "
+            "WHERE s.target_id=? AND s.source='ebay' AND EXISTS (SELECT 1 FROM ebay_sold e WHERE e.snapshot_id=s.id) ORDER BY s.id DESC LIMIT 1",
+            (t.id,)).fetchone()
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(row["captured_at"])).days if row else None
+        out.append({"id": t.id, "name": t.name, "category": t.category, "ebay_query": t.ebay_query,
+                    "sold_url": build_ebay_sold_url(t.ebay_query), "captured_at": row["captured_at"] if row else None,
+                    "count": row["n"] if row else 0, "age_days": age,
+                    "fresh": row is not None and age is not None and age < cfg.app.ebay_manual_days})
+    return out

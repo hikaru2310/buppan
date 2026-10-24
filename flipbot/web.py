@@ -21,6 +21,7 @@ POST /api/month-actual    月次の実績（固定費・入金総額・オーナ
 POST /api/genre           ジャンルの停止・再開・追加・削除
 POST /api/ebay-import     eBayのCSV（注文・取引レポート）を取り込み {"text":..., "apply": bool}
 GET  /api/listing-draft?sku= 英語の出品下書き
+POST /api/ebay-page       普段のChromeから送られた eBay「売れた商品」ページを相場として取り込み {"html","url","target_id"?}
 POST /api/settings        画面入力の設定値（現金残高など）{"cash_jpy": ...}
 GET  /api/queue.csv       仕入れキューを CSV で書き出し
 GET  /api/skus.csv        全SKU（在庫・取引）を CSV で書き出し
@@ -49,7 +50,7 @@ from . import ops
 from . import plan as plan_mod
 from .config import Config, load_config
 from .interactive import ebay_login_until_ready
-from .pipeline import active_genres, all_genres, scan_all
+from .pipeline import active_genres, all_genres, ebay_import_status, import_ebay_page, scan_all
 from .sources import sample_targets
 
 INDEX_HTML = Path(__file__).parent / "web" / "index.html"
@@ -100,7 +101,7 @@ class AppState:
                 self.last_error = repr(e)
                 return None
             # eBayのログイン切れを検知したら、ログイン画面を自動で開く（一定時間に1回まで）
-            if any("ログイン" in n.get("message", "") or "拒否" in n.get("message", "") for n in res.get("notes", [])):
+            if self.cfg.app.ebay_fetch == "auto" and any("ログイン" in n.get("message", "") or "拒否" in n.get("message", "") for n in res.get("notes", [])):
                 if self._auto_login_due():
                     return self._start_login_unlocked
             return None
@@ -216,6 +217,7 @@ class AppState:
             watch = [dict(r) for r in con.execute("SELECT * FROM watch_items ORDER BY active DESC, id DESC")]
             labels = {f"{r['mercari_title']}\t{r['ebay_url'] or r['ebay_title']}": r["label"] for r in con.execute("SELECT * FROM match_labels")}
             genres_all = [{**t.model_dump(), "active": on, "custom": custom} for t, on, custom in all_genres(con, cfg)]
+            ebay_status = ebay_import_status(cfg, con)
             active_list = active_genres(con, cfg)
             rate, rate_src, rate_at = fx_mod.current_rate(cfg)
             cfg.fx.jpy_per_usd = round(rate, 2)
@@ -236,6 +238,7 @@ class AppState:
             "costs": {**cfg.costs.model_dump(), "from_sheet": from_sheet},
             "watch": watch,
             "labels": labels,
+            "ebay_status": ebay_status,
             "mercari_pause": pause,
             "settings": {
                 "mercari_source": cfg.app.mercari_source,
@@ -245,6 +248,8 @@ class AppState:
                 "auto_scan_minutes": cfg.app.auto_scan_minutes,
                 "genres_per_scan": cfg.app.genres_per_scan,
                 "scan_mode": cfg.app.scan_mode,
+                "ebay_fetch": cfg.app.ebay_fetch,
+                "ebay_manual_days": cfg.app.ebay_manual_days,
                 "handling_days": cfg.app.handling_days,
                 "backup_dir": cfg.app.backup_dir,
             },
@@ -614,6 +619,10 @@ def _make_handler(state: AppState):
                 self._json(state.save_genre(body))
             elif path == "/api/ebay-import":
                 self._json(state.ebay_import(str(body.get("text", "")), bool(body.get("apply"))))
+            elif path == "/api/ebay-page":
+                cfg = state.cfg
+                cfg.fx.jpy_per_usd = round(fx_mod.current_rate(cfg)[0], 2)
+                self._json(import_ebay_page(cfg, str(body.get("html", "")), str(body.get("url", "")), body.get("target_id") or None))
             elif path == "/api/evaluate":
                 self._json(state.evaluate(str(body.get("url", "")).strip(), body.get("target_id")))
             elif path == "/api/notify-test":

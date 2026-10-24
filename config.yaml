@@ -33,6 +33,9 @@ app:
   mercari_scroll_steps: 18
   # eBay成約データを何時間再利用するか（eBayへのアクセスを減らす）
   ebay_cache_hours: 12
+  # eBay相場の取り方: manual = 普段のChromeから「Arbiterへ送る」で取り込む（ツールはeBayに自動アクセスしない）
+  ebay_fetch: manual
+  ebay_manual_days: 7        # 取り込んだ相場を使う日数
 
 # ジャンル定義（監視対象）。事業計画シート「当たりジャンル商品DB」の優先度S/Aを中心に構成。
 #   category : 計画シート「カテゴリ別採算」のカテゴリ名 → 貢献利益の下限・資金配分の判定に使う
