@@ -168,6 +168,10 @@ class AppConfig(BaseModel):
     backup_dir: Optional[str] = None
     # 売れてから発送までの社内期限（日）
     handling_days: int = 3
+    # eBayのログイン用メールアドレス（ログイン画面に自動で入力。パスワードは扱わない）。config.local.yaml に書く
+    ebay_login_email: Optional[str] = None
+    # スキャンでeBayのログイン切れを検知したら、ログイン画面を自動で開く（この時間に1回まで）
+    auto_open_login_hours: float = 6
     # 監視範囲: all = 設定ジャンル＋マスター / masters_only = マスターだけ（メルカリへのアクセス最小）
     scan_mode: str = "all"
     # メルカリ一覧の遅延読み込み対策のスクロール回数（多いほど件数↑・時間↑）

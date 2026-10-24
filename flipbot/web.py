@@ -92,14 +92,48 @@ class AppState:
         return True
 
     def start_scan(self) -> bool:
-        def scan() -> None:
+        def scan():
             try:
-                asyncio.run(scan_all(self.cfg, data_source=self.source, sort_by="score", rotate=True))
+                res = asyncio.run(scan_all(self.cfg, data_source=self.source, sort_by="score", rotate=True))
                 self.last_error = None
             except Exception as e:  # noqa: BLE001 - 画面に出す
                 self.last_error = repr(e)
+                return None
+            # eBayのログイン切れを検知したら、ログイン画面を自動で開く（一定時間に1回まで）
+            if any("ログイン" in n.get("message", "") or "拒否" in n.get("message", "") for n in res.get("notes", [])):
+                if self._auto_login_due():
+                    return self._start_login_unlocked
+            return None
 
         return self._run_bg("scan", scan)
+
+    def _auto_login_due(self) -> bool:
+        hours = self.cfg.app.auto_open_login_hours
+        if not hours:
+            return False
+        con = self._con()
+        try:
+            from datetime import datetime, timedelta, timezone
+
+            last = db.get_setting(con, "auto_login_opened_at")
+            if last and datetime.fromisoformat(last) > datetime.now(timezone.utc) - timedelta(hours=hours):
+                return False
+            db.set_setting(con, "auto_login_opened_at", db.utc_now_iso())
+            con.commit()
+        finally:
+            con.close()
+        try:
+            from .notify import get_notifier
+
+            n = get_notifier(self.cfg)
+            if n:
+                n.send("🔑 eBayのログインが切れていたため、MacでeBayのログイン画面を開きました（15分間待ちます）。サインインを押してください。")
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+
+    def _start_login_unlocked(self) -> None:
+        self.start_login()
 
     def evaluate(self, url: str, target_id: Optional[str]) -> dict[str, Any]:
         """URLを貼って判定。ブラウザのプロファイルは同時に1つしか開けないので、スキャン中は待ってもらう。"""
@@ -120,7 +154,7 @@ class AppState:
     def start_login(self) -> bool:
         def login() -> None:
             try:
-                self.login_result = asyncio.run(ebay_login_until_ready(self.cfg))
+                self.login_result = asyncio.run(ebay_login_until_ready(self.cfg, timeout_sec=900))
             except Exception as e:  # noqa: BLE001
                 self.login_result = f"error: {e!r}"
             # ログインできたら eBay 相場を取り直す

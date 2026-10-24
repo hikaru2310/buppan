@@ -85,10 +85,20 @@ async def ebay_login_until_ready(cfg: Config, *, timeout_sec: int = 600) -> str:
     )
     try:
         await session.page.goto(build_ebay_sold_url(query), wait_until="domcontentloaded")
+        filled = False
         for _ in range(timeout_sec // 2):
             await asyncio.sleep(2)
             if session.page.is_closed():
                 return "closed"
+            # ログイン画面ならメールアドレスだけ入れておく（パスワードは入れない。Chromeに保存すれば自動で入る）
+            if not filled and cfg.app.ebay_login_email and "signin" in session.page.url:
+                try:
+                    box = await session.page.query_selector("#userid")
+                    if box and not (await box.input_value()):
+                        await box.fill(cfg.app.ebay_login_email)
+                        filled = True
+                except PlaywrightError:
+                    pass
             try:
                 html = await session.page.content()
             except PlaywrightError:
