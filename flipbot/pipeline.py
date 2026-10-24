@@ -114,6 +114,65 @@ def _cached_ebay(con, target: Target, max_age_hours: float, manual_days: float =
     return row["captured_at"], items, meta.get("active_count")
 
 
+def _ebay_api_sold(cfg: Config, con, target: Target) -> Optional[dict[str, Any]]:
+    """Marketplace Insights（売れた商品）。未承認と分かったら24時間は呼ばない。結果は通常の成約データとして保存（キャッシュ対象）。"""
+    from .ebay_api import EbayApi, EbayApiError
+
+    api = EbayApi(cfg)
+    if not (api.configured and cfg.ebay_api.use_insights and target.ebay_category_ids):
+        return None
+    until = db.get_setting(con, "insights_unavailable_until")
+    if until and until > db.utc_now_iso():
+        return None
+    try:
+        items, total = api.sold(target.ebay_query, target.ebay_category_ids)
+    except EbayApiError as e:
+        if e.status in (401, 403):
+            db.set_setting(con, "insights_unavailable_until", (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(timespec="seconds"))
+            db.set_setting(con, "insights_last_error", str(e))
+            con.commit()
+        return {"error": str(e)}
+    if items:
+        db.upsert_target(con, target.id, target.name)
+        snap = db.create_snapshot(con, target_id=target.id, source="ebay", meta_json=json.dumps(
+            {"url": build_ebay_sold_url(target.ebay_query), "source": "api_insights", "sold_total": total}, ensure_ascii=False))
+        con.executemany(
+            "INSERT INTO ebay_sold(snapshot_id, title, price_usd, shipping_usd, total_usd, url, ended_at, condition, sold_date) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [(snap.id, i.title, i.price_usd, i.shipping_usd, i.total_usd, i.url, None, i.condition, i.sold_date) for i in items])
+        con.commit()
+    return {"items": items, "total": total}
+
+
+def _ebay_api_active(cfg: Config, con, target: Target) -> Optional[dict[str, Any]]:
+    """Browse（出品中）。ジャンルごとに active_cache_hours 時間キャッシュ。"""
+    from .ebay_api import EbayApi, EbayApiError
+
+    api = EbayApi(cfg)
+    if not (api.configured and cfg.ebay_api.use_browse):
+        return None
+    row = con.execute("SELECT id, captured_at, meta_json FROM snapshots WHERE target_id=? AND source='ebay_active' ORDER BY id DESC LIMIT 1",
+                      (target.id,)).fetchone()
+    if row and datetime.fromisoformat(row["captured_at"]) > datetime.now(timezone.utc) - timedelta(hours=cfg.ebay_api.active_cache_hours):
+        meta = json.loads(row["meta_json"] or "{}")
+        meta["items"] = [EbaySold(title=r["title"], price_usd=r["price_usd"], shipping_usd=r["shipping_usd"], total_usd=r["total_usd"],
+                                  url=r["url"], condition=r["condition"]) for r in con.execute("SELECT * FROM ebay_sold WHERE snapshot_id=?", (row["id"],))]
+        return meta
+    try:
+        a = api.active(target.ebay_query, target.ebay_category_ids)
+    except EbayApiError as e:
+        db.set_setting(con, "browse_last_error", str(e))
+        con.commit()
+        return None
+    db.upsert_target(con, target.id, target.name)
+    snap = db.create_snapshot(con, target_id=target.id, source="ebay_active", meta_json=json.dumps(
+        {k: v for k, v in a.items() if k != "items"}, ensure_ascii=False))
+    con.executemany(
+        "INSERT INTO ebay_sold(snapshot_id, title, price_usd, shipping_usd, total_usd, url, ended_at, condition, sold_date) VALUES(?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+        [(snap.id, i.title, i.price_usd, i.shipping_usd, i.total_usd, i.url, None, i.condition) for i in a["items"]])
+    con.commit()
+    return a
+
+
 def _save_debug(name: str, html: str) -> None:
     Path("./data").mkdir(parents=True, exist_ok=True)
     Path(f"./data/debug_{name}.html").write_text(html, encoding="utf-8")
@@ -296,8 +355,13 @@ async def crawl_target_once(cfg: Config, target: Target, session=None, *, fetch_
         ebay_block: Optional[str] = None
         cached = _cached_ebay(con, target, cfg.app.ebay_cache_hours, cfg.app.ebay_manual_days)
         active_count: Optional[int] = None
+        api_res = None
+        if not cached:
+            api_res = _ebay_api_sold(cfg, con, target)  # 公式API（Marketplace Insights・承認制）
         if cached:
             ebay_cached_at, ebay_items, active_count = cached
+        elif api_res and api_res.get("items"):
+            ebay_cached_at, ebay_items = db.utc_now_iso(), api_res["items"]
         elif cfg.app.ebay_fetch == "manual":
             # eBayには自動でアクセスしない（普段のChromeから「Arbiterへ送る」で取り込んだ相場だけを使う）
             ebay_cached_at, ebay_items = None, []
@@ -332,6 +396,21 @@ async def crawl_target_once(cfg: Config, target: Target, session=None, *, fetch_
                     [(ebay_snap.id, it.title, it.price_usd, it.shipping_usd, it.total_usd, it.url, None, it.condition, it.sold_date) for it in ebay_items],
                 )
                 con.commit()
+
+        # 出品中（競合）の件数と価格：公式API（Browse）で取る
+        act = _ebay_api_active(cfg, con, target)
+        if act:
+            if act.get("total") is not None:
+                active_count = act["total"]
+            if not ebay_items and cfg.ebay_api.active_as_market and act.get("items"):
+                # 売れた相場がないジャンルの暫定相場：出品中の価格×係数（候補には「暫定相場」と明記）
+                d_ = cfg.ebay_api.active_discount
+                ebay_items = [EbaySold(title=i.title, price_usd=i.price_usd * d_, shipping_usd=(i.shipping_usd or 0) * d_,
+                                       total_usd=i.total_usd * d_, url=i.url, condition=i.condition) for i in act["items"]]
+                ebay_block = None
+                ebay_cached_at = "active"
+        if ebay_items and ebay_block and ebay_block.startswith("このジャンルのeBay相場が未取り込み"):
+            ebay_block = None
 
         return {
             "mercari": {"url": mercari_url, "count": len(mercari_items), "block_reason": mercari_block},
@@ -460,6 +539,7 @@ def rank_target(
     con,
     plan: Optional[dict[str, Any]] = None,
     active_count: Optional[int] = None,
+    provisional: bool = False,
 ) -> tuple[list[Candidate], RankStats]:
     th = cfg.thresholds
     learned = Learned(con, target.id)
@@ -501,6 +581,8 @@ def rank_target(
             continue
         comps = learned.filter(it.title, find_comps(it.title, ebay_items, title_of=lambda e: e.title, threshold=th.match_threshold))
         comps, comp_note = select_comps(comps, it.condition_id, th.min_comps)
+        if provisional:
+            comp_note = f"暫定相場：売れた価格ではなく、出品中の価格×{cfg.ebay_api.active_discount:.0%}"
         market = market_price([c.item.total_usd for c in comps], min_samples=th.min_comps)
         if market is None:
             stats.no_comp += 1
@@ -623,6 +705,7 @@ async def scan_all(
     notes: list[dict[str, Any]] = []
     collected: list[tuple[Target, list[MercariListing], list[EbaySold]]] = []
     actives: dict[str, Optional[int]] = {}
+    provisional: set[str] = set()  # 出品中の価格から作った暫定相場のジャンル
 
     targets = select_targets(con, cfg, rotate=rotate)
     paused_until = db.get_setting(con, "mercari_pause_until")
@@ -658,6 +741,8 @@ async def scan_all(
                     ebay_ok = False
                 collected.append((t, res["mercari_items"], res["ebay_items"]))
                 actives[t.id] = res["ebay"].get("active_count")
+                if res["ebay"].get("cached_at") == "active":
+                    provisional.add(t.id)
                 if lazy.mercari_anomaly:
                     # 止められている兆候：残りのジャンルは取得せず、一定時間メルカリへのアクセスを止める
                     until = _pause_mercari(con, cfg, lazy.mercari_anomaly)
@@ -696,7 +781,7 @@ async def scan_all(
         mercari_count += len(m_items)
         ebay_count += len(e_items)
         cands, st = rank_target(cfg=cfg, target=t, mercari_items=m_items, ebay_items=e_items, con=con, plan=plan,
-                                active_count=actives.get(t.id))
+                                active_count=actives.get(t.id), provisional=t.id in provisional)
         all_cands.extend(cands)
         for k in asdict(st):
             setattr(total, k, getattr(total, k) + getattr(st, k))

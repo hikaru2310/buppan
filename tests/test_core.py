@@ -225,6 +225,60 @@ def test_alert_once_and_assumptions():
     assert cfg.costs.us_buyer_share == 0.4 and cfg.costs.us_duty_rate == 0.15 and len(applied) == 2
 
 
+def test_ebay_api_browse_insights(tmp_token=TMP / "tok.json"):
+    """公式API: Browse/Insights の応答を相場データに変換、Insights未承認なら24時間止める。"""
+    import urllib.error
+
+    from flipbot import ebay_api
+    from flipbot.pipeline import _ebay_api_active, _ebay_api_sold
+
+    cfg = make_cfg()
+    cfg.ebay_api.client_id, cfg.ebay_api.client_secret = "id", "secret"
+    con = con_for(cfg)
+    t = Target(id="f3", name="Nikon F3", mercari_query="ニコン F3", ebay_query="Nikon F3", ebay_category_ids=["15230"])
+    ebay_api.TOKEN_CACHE = tmp_token
+    calls = []
+
+    def fake_open(self, req):
+        calls.append(req.full_url)
+        if "oauth2/token" in req.full_url:
+            return {"access_token": "tok", "expires_in": 7200}
+        if "browse" in req.full_url:
+            return {"total": 321, "itemSummaries": [
+                {"title": "Nikon F3 body", "price": {"value": "250.00"}, "conditionId": "3000",
+                 "shippingOptions": [{"shippingCost": {"value": "20"}}], "itemWebUrl": "u1"},
+                {"title": "Nikon F3 parts", "price": {"value": "90"}, "conditionId": "7000"}]}
+        if insights_ok:
+            return {"total": 2, "itemSales": [
+                {"title": "Nikon F3 sold", "lastSoldPrice": {"value": "300"}, "lastSoldDate": "2026-10-01T00:00:00.000Z", "conditionId": "1000"},
+                {"title": "broken", "lastSoldPrice": None}]}
+        raise ebay_api.EbayApiError("未承認", 403)
+
+    orig = ebay_api.EbayApi._open
+    ebay_api.EbayApi._open = fake_open
+    try:
+        insights_ok = True
+        a = _ebay_api_active(cfg, con, t)
+        assert a["total"] == 321 and a["n"] == 2 and a["min_usd"] == 90 and a["median_usd"] == 270
+        assert [i.condition for i in a["items"]] == ["used", "parts"]
+        n = len(calls)
+        assert _ebay_api_active(cfg, con, t)["total"] == 321 and len(calls) == n  # キャッシュ
+        r = _ebay_api_sold(cfg, con, t)
+        assert r["total"] == 2 and len(r["items"]) == 1
+        it = r["items"][0]
+        assert it.total_usd == 300 and it.sold_date == "2026-10-01" and it.condition == "new"
+        assert sum(1 for c in calls if "oauth2/token" in c) == 2  # スコープごとに1回
+        insights_ok = False
+        assert "error" in _ebay_api_sold(cfg, con, t)
+        assert db.get_setting(con, "insights_unavailable_until") > db.utc_now_iso()
+        n = len(calls)
+        assert _ebay_api_sold(cfg, con, t) is None and len(calls) == n  # 24時間は呼ばない
+    finally:
+        ebay_api.EbayApi._open = orig
+    cfg.ebay_api.client_id = ""
+    assert ebay_api.status(cfg)["configured"] is False
+
+
 def main() -> int:
     tests = [v for k, v in globals().items() if k.startswith("test_")]
     ng = 0

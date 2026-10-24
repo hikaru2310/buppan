@@ -279,10 +279,25 @@ VIEWS.master=["実務1 仕入れ / マスター（継続仕入れ）",()=>{
 
 // ---- eBay相場の取り込み（普段のChromeから送る）
 const BOOKMARKLET="javascript:(()=>{const O='http://127.0.0.1:8000';if(!/LH_Sold=1/.test(location.search)){alert('eBayの「売れた商品」の検索結果ページで押してください');return}const w=window.open(O+'/#ebay','arbiter');if(!w){alert('ポップアップを許可してください');return}const d={type:'arbiter-ebay-page',html:document.documentElement.outerHTML,url:location.href};let n=0;const iv=setInterval(()=>{n++;try{w.postMessage(d,O)}catch(e){}if(n>50)clearInterval(iv)},300);window.addEventListener('message',e=>{if(e.data&&e.data.type==='arbiter-ack')clearInterval(iv)})})()";
+let apiTest=null;
+function ebayApiCard(){
+  const a=S.settings?.ebay_api||{}, st=S.ebay_api_state||{};
+  const ins=st.insights_unavailable_until&&st.insights_unavailable_until>new Date().toISOString();
+  return `<div class="card" style="padding:14px 18px"><b>eBay公式API</b>
+    <div class="chips" style="margin-top:6px"><span class="chip">キー <b>${a.configured?"設定済み":"未設定"}</b></span>
+      <span class="chip">出品中（Browse） <b>${a.configured&&a.use_browse?(st.browse_last_error?"エラー":"自動取得"):"—"}</b></span>
+      <span class="chip">売れた商品（Insights） <b>${!a.configured||!a.use_insights?"—":ins?"未承認（手動取り込みを使用）":"自動取得"}</b></span>
+      <span class="chip">暫定相場（出品中×0.85） <b>${a.active_as_market?"使う":"使わない"}</b></span>
+      <button class="btn sm" id="apiTest">接続テスト</button></div>
+    ${apiTest?`<div class="note">${apiTest.configured?`${esc(apiTest.browse?.message||"")}<br>${esc(apiTest.insights?.message||"")}`:esc(apiTest.message)}</div>`:""}
+    ${st.browse_last_error?`<div class="meta">Browseの直近のエラー：${esc(st.browse_last_error)}</div>`:""}
+    <div class="meta">キーは config.local.yaml に <code>ebay_api: {client_id: "App ID", client_secret: "Cert ID"}</code> の形で書きます（GitHubには上がりません）。売れた商品のAPIが承認されるまでは、下のブックマークで取り込んだ相場を使います。</div></div>`;
+}
 VIEWS.ebayimp=["実務1 仕入れ / eBay相場の取り込み",()=>{
   const st=S.ebay_status||[], stale=st.filter(x=>!x.fresh), r=ebayLast;
-  return h1("eBayの相場は、普段のChromeから送る。",`ツールはeBayに自動でアクセスしません（自動操作として拒否され、セラーアカウントにリスクがあるため）。ログイン済みの普段のChromeで「売れた商品」のページを開き、ブックマークの「Arbiterへ送る」を押すと、そのジャンルの相場として取り込みます。相場は${S.settings?.ebay_manual_days||7}日間使い、期限が切れたら更新します。`)
-  + `<div class="card" style="padding:14px 18px"><b>最初に1回だけ：ブックマークを登録</b>
+  return h1("eBayの相場は、公式APIか普段のChromeから。",`ツールがeBayのページを自動で開くことはしません（自動操作として拒否され、セラーアカウントにリスクがあるため）。自動で取れるのはeBay公式APIだけです。APIで売れた商品が取れないあいだは、ログイン済みの普段のChromeで「売れた商品」のページを開き、ブックマークの「Arbiterへ送る」を押すと、そのジャンルの相場として取り込みます。相場は${S.settings?.ebay_manual_days||7}日間使い、期限が切れたら更新します。`)
+  + ebayApiCard()
+  + `<div class="card" style="padding:14px 18px;margin-top:12px"><b>最初に1回だけ：ブックマークを登録</b>
       <div class="pv" style="margin-top:8px"><a class="btn dark" href="${esc(BOOKMARKLET)}" onclick="event.preventDefault();toast('このボタンをブックマークバーまでドラッグしてください')">Arbiterへ送る</a>
       <span class="meta">← このボタンを、Chromeのブックマークバーへドラッグして登録します（ブックマークバーが出ていなければ ⌘⇧B）。</span></div>
       <div class="meta" style="margin-top:6px">使い方：下の「売れた商品を開く」→ 普段のChromeでページが開く → 一覧が表示されたらブックマークの「Arbiterへ送る」を押す → この画面に結果が出ます。</div></div>`
@@ -298,6 +313,7 @@ VIEWS.ebayimp=["実務1 仕入れ / eBay相場の取り込み",()=>{
   + h2("· 02","ブックマークが使えないとき","ページを保存（⌘S・「ウェブページ、完全」ではなく「HTMLのみ」）してアップロード")
   + `<div class="card" style="padding:14px 18px"><div class="form-inline"><input type="file" id="impFile" accept=".html,.htm"><label>ジャンル<select id="impFileTarget"><option value="">検索語から自動判定</option>${st.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("")}</select></label><label>ページのURL（自動判定用・任意）<input id="impUrl" class="w2" placeholder="https://www.ebay.com/sch/i.html?_nkw=...&LH_Sold=1"></label><button class="btn" id="impUpload">取り込む</button></div></div>`;
 },()=>{
+  const at=$("#apiTest"); if(at) at.onclick=async()=>{at.disabled=true; at.textContent="テスト中…"; apiTest=await (await post("/api/ebay-api-test",{})).json(); render()};
   const rt=$("#impRetry"); if(rt) rt.onclick=async()=>{const t=$("#impTarget").value; const r=await (await post("/api/ebay-page",{html:ebayLast.html,url:ebayLast.url,target_id:t})).json(); ebayLast={...r,html:ebayLast.html,url:ebayLast.url}; toast(r.message); load()};
   const up=$("#impUpload"); if(up) up.onclick=()=>{const f=$("#impFile").files[0]; if(!f){toast("HTMLファイルを選んでください");return}
     const rd=new FileReader(); rd.onload=async()=>{const t=$("#impFileTarget").value; const url=$("#impUrl").value||((S.ebay_status||[]).find(x=>x.id===t)||{}).sold_url||"LH_Sold=1";

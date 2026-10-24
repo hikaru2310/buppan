@@ -194,6 +194,7 @@ class AppState:
                 live_ids = {t.id for t in active_genres(con, cfg)} | {f"m{r['id']}" for r in con.execute("SELECT id FROM watch_items WHERE active=1")}
                 if row["data_source"] != "sample":
                     cands = [c for c in cands if c.get("target_id") in live_ids]
+            api_state = {k: db.get_setting(con, k) for k in ("insights_unavailable_until", "insights_last_error", "browse_last_error")}
             pause_until = db.get_setting(con, "mercari_pause_until")
             pause = {"until": pause_until, "reason": db.get_setting(con, "mercari_pause_reason"),
                      "strikes": int(db.get_setting(con, "mercari_strikes", "0") or 0),
@@ -239,6 +240,7 @@ class AppState:
             "watch": watch,
             "labels": labels,
             "ebay_status": ebay_status,
+            "ebay_api_state": api_state,
             "mercari_pause": pause,
             "settings": {
                 "mercari_source": cfg.app.mercari_source,
@@ -249,6 +251,9 @@ class AppState:
                 "genres_per_scan": cfg.app.genres_per_scan,
                 "scan_mode": cfg.app.scan_mode,
                 "ebay_fetch": cfg.app.ebay_fetch,
+                "ebay_api": {"configured": bool(cfg.ebay_api.client_id and cfg.ebay_api.client_secret),
+                             "use_browse": cfg.ebay_api.use_browse, "use_insights": cfg.ebay_api.use_insights,
+                             "active_as_market": cfg.ebay_api.active_as_market},
                 "ebay_manual_days": cfg.app.ebay_manual_days,
                 "handling_days": cfg.app.handling_days,
                 "backup_dir": cfg.app.backup_dir,
@@ -619,6 +624,10 @@ def _make_handler(state: AppState):
                 self._json(state.save_genre(body))
             elif path == "/api/ebay-import":
                 self._json(state.ebay_import(str(body.get("text", "")), bool(body.get("apply"))))
+            elif path == "/api/ebay-api-test":
+                from . import ebay_api
+
+                self._json(ebay_api.status(state.cfg))
             elif path == "/api/ebay-page":
                 cfg = state.cfg
                 cfg.fx.jpy_per_usd = round(fx_mod.current_rate(cfg)[0], 2)

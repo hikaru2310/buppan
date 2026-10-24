@@ -49,6 +49,7 @@ genres:
     plan_ids: ["P001"]
     mercari_query: "Nikon Ai-s 50mm F1.4"
     ebay_query: "Nikon Ai-s 50mm f/1.4 lens"
+    ebay_category_ids: ["3323"]
     shipping_cost_jpy: 3500
   - id: "nikon-ais-105-25"
     name: "Nikon Ai-s 105mm F2.5"
@@ -56,6 +57,7 @@ genres:
     plan_ids: ["P001"]
     mercari_query: "Nikon Ai-s 105mm F2.5"
     ebay_query: "Nikon Ai-s 105mm f/2.5 lens"
+    ebay_category_ids: ["3323"]
     shipping_cost_jpy: 3500
   - id: "canon-fd-50-14"
     name: "Canon FD 50mm F1.4"
@@ -63,6 +65,7 @@ genres:
     plan_ids: ["P002"]
     mercari_query: "Canon FD 50mm F1.4"
     ebay_query: "Canon FD 50mm f/1.4 lens"
+    ebay_category_ids: ["3323"]
     shipping_cost_jpy: 3500
   - id: "canon-fd-85-18"
     name: "Canon FD 85mm F1.8"
@@ -70,6 +73,7 @@ genres:
     plan_ids: ["P002"]
     mercari_query: "Canon FD 85mm F1.8"
     ebay_query: "Canon FD 85mm f/1.8 lens"
+    ebay_category_ids: ["3323"]
     shipping_cost_jpy: 3500
   - id: "pentax67-105"
     name: "PENTAX 67 105mm F2.4"
@@ -77,6 +81,7 @@ genres:
     plan_ids: ["P003"]
     mercari_query: "PENTAX 67 105mm F2.4"
     ebay_query: "Pentax 67 105mm f/2.4 lens"
+    ebay_category_ids: ["3323"]
     shipping_cost_jpy: 5000
   - id: "contax-t2"
     name: "CONTAX T2"
@@ -84,6 +89,7 @@ genres:
     plan_ids: ["P004"]
     mercari_query: "CONTAX T2"
     ebay_query: "Contax T2 film camera"
+    ebay_category_ids: ["15230"]
     shipping_cost_jpy: 4000
   - id: "ricoh-gr3"
     name: "RICOH GR III"
@@ -91,6 +97,7 @@ genres:
     plan_ids: ["P005"]
     mercari_query: "RICOH GR III"
     ebay_query: "Ricoh GR III digital camera"
+    ebay_category_ids: ["31388"]
     shipping_cost_jpy: 4000
   - id: "fujifilm-x100v"
     name: "FUJIFILM X100V"
@@ -98,6 +105,7 @@ genres:
     plan_ids: ["P005"]
     mercari_query: "FUJIFILM X100V"
     ebay_query: "Fujifilm X100V"
+    ebay_category_ids: ["31388"]
     shipping_cost_jpy: 4500
   - id: "nikon-fm2"
     name: "Nikon FM2"
@@ -105,6 +113,7 @@ genres:
     plan_ids: []
     mercari_query: "Nikon FM2 ボディ"
     ebay_query: "Nikon FM2 film camera body"
+    ebay_category_ids: ["15230"]
     shipping_cost_jpy: 4000
   - id: "nikon-f3"
     name: "Nikon F3"
@@ -112,6 +121,7 @@ genres:
     plan_ids: []
     mercari_query: "ニコン F3 ボディ"
     ebay_query: "Nikon F3 film camera body"
+    ebay_category_ids: ["15230"]
     shipping_cost_jpy: 4000
     # 0001_sedori 2026-06 実データ: eBay Sold 中央値 $360・60件
   - id: "olympus-om1"
@@ -120,6 +130,7 @@ genres:
     plan_ids: []
     mercari_query: "オリンパス OM-1 ボディ"
     ebay_query: "Olympus OM-1 film camera body"
+    ebay_category_ids: ["15230"]
     shipping_cost_jpy: 4000
   - id: "canon-ae1p"
     name: "Canon AE-1 PROGRAM"
@@ -127,6 +138,7 @@ genres:
     plan_ids: []
     mercari_query: "Canon AE-1 PROGRAM"
     ebay_query: "Canon AE-1 Program film camera"
+    ebay_category_ids: ["15230"]
     shipping_cost_jpy: 4000
   - id: "3ds-ll"
     name: "ニンテンドー3DS LL"
@@ -134,6 +146,7 @@ genres:
     plan_ids: ["P010"]
     mercari_query: "ニンテンドー3DS LL 本体"
     ebay_query: "Nintendo 3DS XL console Japan"
+    ebay_category_ids: ["139971"]
     shipping_cost_jpy: 3000
   - id: "gba-sp"
     name: "ゲームボーイアドバンスSP（AGS-101）"
@@ -141,6 +154,7 @@ genres:
     plan_ids: ["P010"]
     mercari_query: "ゲームボーイアドバンスSP AGS-101"
     ebay_query: "Game Boy Advance SP AGS-101"
+    ebay_category_ids: ["139971"]
     shipping_cost_jpy: 2500
   - id: "gbl-astroboy"
     name: "ゲームボーイライト アストロボーイ"
@@ -148,6 +162,7 @@ genres:
     plan_ids: ["P012"]
     mercari_query: "ゲームボーイライト アストロボーイ"
     ebay_query: "Game Boy Light Astro Boy"
+    ebay_category_ids: ["139971"]
     shipping_cost_jpy: 2500
   - id: "boss-pedal"
     name: "BOSS エフェクター（日本製）"
@@ -155,6 +170,7 @@ genres:
     plan_ids: ["P013"]
     mercari_query: "BOSS エフェクター 日本製"
     ebay_query: "BOSS pedal made in Japan"
+    ebay_category_ids: ["41407"]
     shipping_cost_jpy: 3000
   - id: "maxon-od808"
     name: "Maxon OD808"
@@ -162,6 +178,7 @@ genres:
     plan_ids: ["P013"]
     mercari_query: "Maxon OD808"
     ebay_query: "Maxon OD808 overdrive"
+    ebay_category_ids: ["41407"]
     shipping_cost_jpy: 3000
   - id: "walkman-cassette"
     name: "カセットウォークマン"
@@ -169,6 +186,7 @@ genres:
     plan_ids: ["P014"]
     mercari_query: "ウォークマン カセット WM"
     ebay_query: "Sony Walkman cassette player WM"
+    ebay_category_ids: ["15052"]
     shipping_cost_jpy: 3000
   - id: "seiko-6139"
     name: "SEIKO 6139 クロノグラフ"
@@ -176,6 +194,7 @@ genres:
     plan_ids: ["P019"]
     mercari_query: "セイコー 6139"
     ebay_query: "Seiko 6139 chronograph"
+    ebay_category_ids: ["31387"]
     shipping_cost_jpy: 2500
   - id: "gshock-frogman"
     name: "G-SHOCK フロッグマン"
@@ -183,6 +202,7 @@ genres:
     plan_ids: []
     mercari_query: "G-SHOCK フロッグマン GWF"
     ebay_query: "Casio G-Shock Frogman GWF"
+    ebay_category_ids: ["31387"]
     shipping_cost_jpy: 2500
   # 例: ジャンル別の上書き
   #   include_keywords: ["動作確認"]   # どれかを含む出品だけ対象
@@ -247,6 +267,15 @@ category_excludes:
   "ゲーム・限定品": ["ソフトのみ", "説明書のみ", "コントローラーのみ", "ケーブルのみ", "アダプターのみ", "クラシックミニ", "液晶のみ", "シェル", "交換用"]
   "音響・楽器・電子機器": ["箱のみ", "取扱説明書のみ", "電源アダプターのみ", "ノブのみ"]
   "その他型番商品": ["ベルトのみ", "バンドのみ", "コマのみ", "箱のみ"]
+
+# eBay公式API（キーは config.local.yaml の ebay_api: {client_id: "...", client_secret: "..."} に書く）
+#   ebay_category_ids（各ジャンル）は eBay US のカテゴリID:
+#   3323=カメラレンズ / 15230=フィルムカメラ / 31388=デジタルカメラ / 139971=ゲーム機本体 / 41407=ギターエフェクター / 15052=ポータブルオーディオ / 31387=腕時計（要確認）
+ebay_api:
+  marketplace: EBAY_US
+  use_browse: true           # 出品中の件数・価格（競合の数）
+  use_insights: true         # 売れた商品（承認制。未承認なら手動取り込みの相場を使う）
+  active_as_market: false    # 売れた相場がないジャンルで、出品中の価格×0.85を暫定相場にするか
 
 # 通知（Slack）。webhook URL は config.local.yaml に書く:  notify: {slack_webhook_url: "https://hooks.slack.com/services/..."}
 notify:

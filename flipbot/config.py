@@ -90,6 +90,8 @@ class Target(BaseModel):
     conditions: list[int] = Field(default_factory=list)
     # マスター（継続仕入れ）から作られたジャンルか
     is_master: bool = False
+    # eBayのカテゴリID（Marketplace Insights APIで必須。Browse APIでは絞り込みに使う）
+    ebay_category_ids: list[str] = Field(default_factory=list)
     extra_buy_cost_jpy: int = 0  # 梱包・雑費（Costs に加えてジャンル固有に足す分）
     shipping_cost_jpy: int = 0  # 国際送料
     # ジャンル別の eBay FVF 上書き
@@ -185,6 +187,20 @@ class AppConfig(BaseModel):
     ebay_cache_hours: float = 12
 
 
+class EbayApiConfig(BaseModel):
+    """eBay公式API。client_id / client_secret は config.local.yaml に書く（GitHubに上げない）。"""
+
+    client_id: Optional[str] = None  # App ID（Production）
+    client_secret: Optional[str] = None  # Cert ID（Production）
+    marketplace: str = "EBAY_US"
+    use_browse: bool = True  # 出品中の件数・価格（誰でも使える）
+    use_insights: bool = True  # 売れた商品（承認制。未承認ならエラーになり、手動取り込みの相場を使う）
+    # 出品中の価格を「暫定の相場」に使うか（売れた相場がないジャンル用。出品価格は売れた価格より高めになりがち）
+    active_as_market: bool = False
+    active_discount: float = 0.85  # 暫定相場 = 出品中の中央値 × この係数
+    active_cache_hours: float = 12
+
+
 class Notify(BaseModel):
     """通知。webhook URL は config.local.yaml に書く（GitHubに上げない）。"""
 
@@ -209,6 +225,7 @@ class Config(BaseModel):
     plan: PlanSource = Field(default_factory=PlanSource)
     thresholds: Thresholds = Field(default_factory=Thresholds)
     notify: Notify = Field(default_factory=Notify)
+    ebay_api: EbayApiConfig = Field(default_factory=EbayApiConfig)
     # カテゴリ別の除外語（全体 ＋ カテゴリ ＋ ジャンル の3階層でマージ）
     category_excludes: dict[str, list[str]] = Field(default_factory=dict)
     # 全ジャンル共通の除外語
