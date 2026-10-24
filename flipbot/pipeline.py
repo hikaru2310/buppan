@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re as _re_mod
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -62,6 +63,8 @@ async def fetch_html_status(page, url: str, *, scroll_steps: int = 0) -> tuple[s
 
 
 def detect_block(source: str, html: str, page_url: str = "") -> Optional[str]:
+    # 画面の文言データ（<script>内のJSON）には、正常なページでも「ブラウザ非対応」等の文章が入っているので除いて判定する
+    html = _re_mod.sub(r"<script\b.*?</script>", " ", html, flags=_re_mod.S | _re_mod.I)
     h = html.lower()
     u = page_url.lower()
     if source == "mercari":
@@ -252,7 +255,7 @@ async def _mercari_items(cfg: Config, target: Target, lazy: "LazySession") -> tu
     # 異常の検知（アクセスを止められている兆候）→ scan_all がメルカリ取得を一時停止する
     if status in (403, 429) or (status and status >= 500):
         lazy.mercari_anomaly = f"メルカリがHTTP {status} を返しました"
-    elif block or any(k in session.page.url for k in ("challenge", "captcha")):
+    elif (block and not items) or any(k in session.page.url for k in ("challenge", "captcha")):
         lazy.mercari_anomaly = block or "メルカリで人間確認ページが表示されました"
     elif not items and lazy.prev_mercari_count.get(target.id, 0) >= 10:
         lazy.mercari_anomaly = f"前回{lazy.prev_mercari_count[target.id]}件あった検索が急に0件になりました"

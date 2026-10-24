@@ -78,6 +78,14 @@ def test_demand_and_condition_comps():
     assert all(c.item.condition != "parts" for c in select_comps(cs, None, 9)[0])  # 部品取りは常に除外
 
 
+def test_mercari_block_detection_no_false_positive():
+    from flipbot.pipeline import detect_block
+    normal = '<script>{"unsupportedBrowserBody":"お使いのブラウザがWebサイトに対応していない"}</script><div data-testid="item-cell">x</div>'
+    blocked = "<html><body><p>お使いのブラウザがWebサイトに対応していない、または最新版でない可能性があります</p></body></html>"
+    assert detect_block("mercari", normal) is None, "正常なページ（文言データ内の文章）では検知しない"
+    assert detect_block("mercari", blocked), "本当の非対応ページは検知する"
+
+
 def test_mercari_item_page():
     html = ('<meta property="og:title" content="【美品】 ニコン Nikon Ai-s NIKKOR 50mm F1.4 by メルカリ">'
             '<meta property="og:image" content="https://static.mercdn.net/x.jpg">'
