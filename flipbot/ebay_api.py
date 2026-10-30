@@ -68,7 +68,12 @@ class EbayApi:
         body = urllib.parse.urlencode({"grant_type": "client_credentials", "scope": scope}).encode()
         req = urllib.request.Request(TOKEN_URL, data=body, headers={
             "Authorization": f"Basic {basic}", "Content-Type": "application/x-www-form-urlencoded"})
-        data = self._open(req)
+        try:
+            data = self._open(req)
+        except EbayApiError as e:
+            if scope == SCOPE_INSIGHTS and e.status in (400, 403):  # invalid_scope = Insights の利用が許可されていない
+                raise EbayApiError("Marketplace Insights API の利用が承認されていません（eBayへの利用申請が必要）", 403) from e
+            raise
         cache[scope] = {"token": data["access_token"], "exp": time.time() + int(data.get("expires_in", 7200)), "client_id": self.c.client_id}
         TOKEN_CACHE.parent.mkdir(parents=True, exist_ok=True)
         TOKEN_CACHE.write_text(json.dumps(cache))
