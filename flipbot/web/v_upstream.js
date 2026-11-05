@@ -226,22 +226,54 @@ function dueTasks(){
   const t=S.plan.tasks||[], lim=new Date(Date.now()+7*864e5).toISOString().slice(0,10);
   return t.filter(x=>!/完了|中止/.test(x["ステータス"]||"")&&x["期限"]&&x["期限"]<=lim);
 }
+const AI_KINDS=["AI","AI＋人"];
+const isOpen=x=>!/完了|中止/.test(x["ステータス"]||"");
+function aiCell(x){
+  const k=x["実行区分"]||"", running=(S.ai?.runs||[]).some(r=>r.status==="running"&&r.task_id===x.ID);
+  const badge=k?`<span class="badge ${k==="人"?"":"ok"}">${esc(k)}</span>`:'<span class="meta">未分類</span>';
+  const btn=AI_KINDS.includes(k)&&isOpen(x)&&S.ai?.available?`<button class="btn sm ${running?"":"dark"}" data-ai="${esc(x.ID)}" ${running?"disabled":""}>${running?"実行中…":"AIで実行"}</button>`:"";
+  return `${badge}${x["AIの担当範囲・人の作業"]?`<div class="mini">${esc(x["AIの担当範囲・人の作業"])}</div>`:""}${btn}`;
+}
+function aiRuns(){
+  const a=S.ai||{}, runs=a.runs||[];
+  if(!a.available) return '<div class="card note">Claude Code（claude コマンド）が見つからないため、AIでの実行は使えません。</div>';
+  if(!runs.length) return '<div class="card empty">まだAIで実行したタスクはありません</div>';
+  const st={running:"実行中",done:"完了",failed:"失敗"};
+  return `<div class="card"><div class="wide"><table><thead><tr><th>タスク</th><th>状態</th><th>開始</th><th>結果</th></tr></thead><tbody>
+    ${runs.map(r=>`<tr><td class="wrap"><b>${esc(r.task_id)}</b> ${esc(r.task||"")}</td><td><span class="badge ${r.status==="done"?"ok":r.status==="failed"?"alert":""}">${st[r.status]||esc(r.status)}${r.timeout?"（時間切れ）":""}</span></td>
+      <td class="mini">${esc((r.started_at||"").replace("T"," ").slice(0,16))}</td>
+      <td class="wrap">${r.report?`<details><summary>報告を見る</summary><pre style="white-space:pre-wrap;font-size:12px">${esc(r.report)}</pre></details>`:'<span class="meta">—</span>'}</td></tr>`).join("")}</tbody></table></div></div>
+    <div class="meta">AIはシートのステータスを書き換えません。報告を確認して、シートを更新してください。結果のファイルは data/ai_runs/、文書の成果物は docs/ai-tasks/ にあります。</div>`;
+}
 VIEWS.tasks=["上流 / 計画タスク",()=>{
   const all=S.plan.tasks||[], today=new Date().toISOString().slice(0,10);
+  const kind=localGet("taskKind")||"", byKind=k=>all.filter(x=>(x["実行区分"]||"")===k);
   const open_=all.filter(x=>!/完了|中止/.test(x["ステータス"]||""));
   const overdue=open_.filter(x=>x["期限"]&&x["期限"]<today), soon=dueTasks().filter(x=>!(x["期限"]<today));
   const tool=all.filter(x=>TOOL_TASK[x.ID]);
-  const tbl=list=>`<div class="card"><div class="wide"><table><thead><tr><th>ID</th><th>タスク</th><th>完了条件</th><th>期限</th><th>優先度</th><th>担当</th><th>ステータス</th><th>KPI</th></tr></thead><tbody>
+  const tbl=list0=>{const list=kind?list0.filter(x=>(x["実行区分"]||"")===kind):list0; return `<div class="card"><div class="wide"><table><thead><tr><th>ID</th><th>タスク</th><th>完了条件</th><th>期限</th><th>優先度</th><th>担当</th><th>ステータス</th><th>実行</th></tr></thead><tbody>
     ${list.map(x=>`<tr><td class="meta">${esc(x.ID)}</td><td class="wrap"><b>${esc(x["タスク"])}</b><div class="meta">${esc(x["フェーズ"])}・${esc(x["カテゴリ"])}</div></td><td class="wrap">${esc(x["成果物・完了条件"])}</td>
-      <td class="${x["期限"]<today?"overdue":""}">${esc(x["期限"])}</td><td>${esc(x["優先度"])}</td><td class="mini">${esc(x["担当区分"])}${x["担当者"]?"・"+esc(x["担当者"]):""}</td><td>${esc(x["ステータス"])}</td><td class="mini">${esc(x.KPI)}</td></tr>`).join("")||'<tr><td colspan="8" class="empty">該当なし</td></tr>'}</tbody></table></div></div>`;
-  return h1("計画のアクションと、ツールの進み具合。","シート「タスク管理」を読み込んで、期限切れと今週の期限を出しています。ステータスの更新はシートで行ってください（ツールは読み取りのみ）。")
+      <td class="${x["期限"]<today?"overdue":""}">${esc(x["期限"])}</td><td>${esc(x["優先度"])}</td><td class="mini">${esc(x["担当区分"])}${x["担当者"]?"・"+esc(x["担当者"]):""}</td><td>${esc(x["ステータス"])}</td><td class="wrap" style="min-width:150px">${aiCell(x)}</td></tr>`).join("")||'<tr><td colspan="8" class="empty">該当なし</td></tr>'}</tbody></table></div></div>`};
+  const aiOpen=all.filter(x=>AI_KINDS.includes(x["実行区分"]||"")&&isOpen(x));
+  return h1("計画のアクションと、ツールの進み具合。","シート「タスク管理」を読み込んで、期限切れと今週の期限を出しています。実行区分が「AI」「AI＋人」のタスクは「AIで実行」でAI（Claude Code）に作業させられます。ステータスの更新は結果を確認してシートで行ってください（ツールはシートを書き換えません）。")
   + planBanner()
   + `<div class="chips"><span class="chip">全 <b>${all.length}</b></span><span class="chip">未完了 <b>${open_.length}</b></span><span class="chip ${overdue.length?"sample":""}">期限切れ <b>${overdue.length}</b></span><span class="chip">7日以内 <b>${soon.length}</b></span></div>`
+  + `<div class="chips"><span class="meta">実行区分で絞り込み：</span>${[["","すべて"],["AI","AI"],["AI＋人","AI＋人"],["人","人"]].map(([k,l])=>`<button class="chip ${kind===k?"on":""}" data-kind="${k}">${l} <b>${k?byKind(k).length:all.length}</b></button>`).join("")}</div>`
+  + h2("· 00","AIで実行できる未完了タスク",`${aiOpen.length}件・ボタンを押すとAI（Claude Code）がこのPCで作業します`)+tbl(aiOpen)
   + h2("· 01","期限切れ",`${overdue.length}件`)+tbl(overdue.slice(0,40))
   + h2("· 02","7日以内に期限",`${soon.length}件`)+tbl(soon)
   + h2("· 03","ツールで実装・自動化したタスク","シートのステータス更新の参考にしてください")
   + `<div class="card"><div class="wide"><table><thead><tr><th>ID</th><th>タスク</th><th>シートの状態</th><th>ツールでの対応</th></tr></thead><tbody>
-    ${tool.map(x=>`<tr><td class="meta">${esc(x.ID)}</td><td class="wrap"><b>${esc(x["タスク"])}</b></td><td>${esc(x["ステータス"])}</td><td class="wrap">${esc(TOOL_TASK[x.ID])}</td></tr>`).join("")}</tbody></table></div></div>`;
+    ${tool.map(x=>`<tr><td class="meta">${esc(x.ID)}</td><td class="wrap"><b>${esc(x["タスク"])}</b></td><td>${esc(x["ステータス"])}</td><td class="wrap">${esc(TOOL_TASK[x.ID])}</td></tr>`).join("")}</tbody></table></div></div>`
+  + h2("· 04","AIの実行履歴",`${(S.ai?.runs||[]).length}件`) + aiRuns();
+},()=>{
+  $$("[data-kind]").forEach(b=>b.onclick=()=>{localSet("taskKind",b.dataset.kind);render()});
+  $$("[data-ai]").forEach(b=>b.onclick=async()=>{
+    const t=(S.plan.tasks||[]).find(x=>x.ID===b.dataset.ai); if(!t) return;
+    if(!confirm(`${t.ID}「${t["タスク"]}」をAIで実行します。\n\nAIはこのPCでファイルの作成・ツールのコード変更・データの集計を行います（eBay・メルカリへのアクセス、購入、git push はしません）。\n数分〜数十分かかります。実行しますか？`)) return;
+    b.disabled=true; b.textContent="開始中…";
+    const r=await (await post("/api/ai-task",{id:t.ID})).json(); toast(r.message); load();
+  });
 }];
 const TOOL_TASK={
   P10:"利益計算をユニットエコノミクスの費用構成（手数料・広告・送料・梱包・作業・返品為替引当）に改修。さらに海外手数料1.35%・米国関税（DDP）・換金スプレッドを追加",

@@ -324,6 +324,39 @@ def test_ebay_api_browse_insights(tmp_token=TMP / "tok.json"):
     assert ebay_api.status(cfg)["configured"] is False
 
 
+def test_ai_runner_start_and_finish():
+    """AIで実行: 区分と完了の判定、同時実行の禁止、終了後の報告の取り込み。"""
+    from flipbot import ai_runner
+
+    ai_runner.RUN_DIR = TMP / "ai_runs"
+    ai_runner.INDEX = ai_runner.RUN_DIR / "index.json"
+    ai_runner.claude_bin = lambda: "/bin/claude"
+    task = {"ID": "O04", "タスク": "カテゴリ別実現貢献利益を比較", "実行区分": "AI", "ステータス": "未着手"}
+    assert ai_runner.can_run({**task, "実行区分": "人"}) and ai_runner.can_run({**task, "ステータス": "完了"})
+    assert "O04" in ai_runner.build_prompt(task) and "git push" in ai_runner.build_prompt(task)
+    seen = {}
+
+    class FakeProc:
+        pid, code = 99999999, None
+
+        def poll(self):
+            return self.code
+
+    def fake_popen(cmd, **kw):
+        seen["cmd"], seen["cwd"] = cmd, kw["cwd"]
+        kw["stdout"].write(json.dumps({"result": "## やったこと\n集計した", "is_error": False, "total_cost_usd": 0.1}))
+        kw["stdout"].flush()
+        seen["proc"] = FakeProc()
+        return seen["proc"]
+
+    r = ai_runner.start(task, popen=fake_popen)
+    assert r["ok"] and "--disallowedTools" in seen["cmd"] and "Bash(git push:*)" in seen["cmd"]
+    assert not ai_runner.start({**task, "ID": "O12"}, popen=fake_popen)["ok"]  # 同時実行しない
+    seen["proc"].code = 0
+    run = ai_runner.summary()["runs"][0]
+    assert run["status"] == "done" and "集計した" in run["report"] and run["task_id"] == "O04"
+
+
 def main() -> int:
     tests = [v for k, v in globals().items() if k.startswith("test_")]
     ng = 0

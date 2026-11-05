@@ -22,6 +22,7 @@ POST /api/genre           ジャンルの停止・再開・追加・削除
 POST /api/ebay-import     eBayのCSV（注文・取引レポート）を取り込み {"text":..., "apply": bool}
 GET  /api/listing-draft?sku= 英語の出品下書き
 POST /api/ebay-page       普段のChromeから送られた eBay「売れた商品」ページを相場として取り込み {"html","url","target_id"?}
+POST /api/ai-task        計画タスクをAI（Claude Code）で実行 {"id": "P01"}
 POST /api/settings        画面入力の設定値（現金残高など）{"cash_jpy": ...}
 GET  /api/queue.csv       仕入れキューを CSV で書き出し
 GET  /api/skus.csv        全SKU（在庫・取引）を CSV で書き出し
@@ -44,7 +45,7 @@ from rich.console import Console
 
 import yaml
 
-from . import db
+from . import ai_runner, db
 from . import fx as fx_mod
 from . import ops
 from . import plan as plan_mod
@@ -243,6 +244,7 @@ class AppState:
             "labels": labels,
             "ebay_status": ebay_status,
             "ebay_api_state": api_state,
+            "ai": ai_runner.summary(),
             "mercari_pause": pause,
             "settings": {
                 "mercari_source": cfg.app.mercari_source,
@@ -633,6 +635,10 @@ def _make_handler(state: AppState):
                 self._json(state.save_genre(body))
             elif path == "/api/ebay-import":
                 self._json(state.ebay_import(str(body.get("text", "")), bool(body.get("apply"))))
+            elif path == "/api/ai-task":
+                tasks = plan_mod.load(state.cfg, force=True).get("tasks") or []
+                task = next((t for t in tasks if t.get("ID") == body.get("id")), None)
+                self._json(ai_runner.start(task) if task else {"ok": False, "message": "シートにそのIDのタスクがありません"})
             elif path == "/api/ebay-api-test":
                 from . import ebay_api
 

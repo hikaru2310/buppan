@@ -1,0 +1,189 @@
+"""計画タスクを AI（Claude Code の CLI）で実行する。
+
+画面の「AIで実行」ボタンから、シート「タスク管理」の1行を渡して `claude -p` をバックグラウンドで動かす。
+- 実行できるのは 実行区分 が「AI」「AI＋人」で、未完了のタスクだけ
+- 同時に動くのは1件だけ。結果は data/ai_runs/ に保存し、画面で確認する
+- AIは eBay・メルカリへアクセスしない、購入・出品・送信をしない、git commit/push をしない
+- シートのステータスは書き換えない（人が結果を確認して更新する）
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import threading
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Optional
+
+ROOT = Path(__file__).resolve().parent.parent
+RUN_DIR = Path("./data/ai_runs")
+INDEX = RUN_DIR / "index.json"
+TIMEOUT_SEC = 40 * 60
+AI_KINDS = ("AI", "AI＋人")
+
+ALLOWED_TOOLS = [
+    "Read", "Glob", "Grep", "Edit", "Write", "WebSearch", "WebFetch",
+    "Bash(.venv/bin/python tests/*)", "Bash(.venv/bin/python -m flipbot.run:*)",
+    "Bash(sqlite3 -readonly:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(ls:*)",
+]
+DISALLOWED_TOOLS = [
+    "Bash(git commit:*)", "Bash(git push:*)",
+    "Read(./config.local.yaml)", "Read(./data/ebay_token.json)", "Read(./data/bot-profile/**)",
+]
+
+PROMPT = """あなたは物販ツール「Arbiter」（このリポジトリ）で作業するAIです。
+事業計画シート「タスク管理」の次のタスクを、AIが担当できる範囲で実行してください。
+
+ID: {ID}
+タスク: {タスク}
+成果物・完了条件: {成果物・完了条件}
+KPI: {KPI}
+期限: {期限}
+実行区分: {実行区分}
+AIの担当範囲・人の作業: {AIの担当範囲・人の作業}
+備考: {備考}
+
+守ること:
+- eBay・メルカリのサイトにはアクセスしない（規約で自動アクセスが禁止されています）。購入・出品・メッセージ送信など外部への操作もしない
+- git commit / git push はしない。config.local.yaml や data/ の認証情報は読まない・書き出さない
+- ツールのデータは data/flips.db を `sqlite3 -readonly` で参照する
+- コードを変えたら `.venv/bin/python tests/test_core.py` と `.venv/bin/python tests/test_matching.py` を実行して合格を確認する
+- 文書の成果物は docs/ai-tasks/{ID}.md に日本語で書く
+- 人が判断・操作すべきことは自分で決めず、報告に挙げる
+- データが足りず完了できない場合は、足りないものと集まる時期を報告する
+
+最後に日本語で次の形で報告してください:
+## やったこと
+## 成果物（ファイルのパス）
+## 人が確認・対応すること
+## シートのステータスの提案（完了／進行中／未着手のどれか、と理由）
+"""
+
+_lock = threading.Lock()
+_procs: dict[str, subprocess.Popen] = {}
+
+
+def claude_bin() -> Optional[str]:
+    return shutil.which("claude") or next(
+        (str(p) for p in (Path.home() / ".local/bin/claude", Path("/opt/homebrew/bin/claude"), Path("/usr/local/bin/claude")) if p.exists()), None)
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _load() -> list[dict[str, Any]]:
+    try:
+        return json.loads(INDEX.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _save(runs: list[dict[str, Any]]) -> None:
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    INDEX.write_text(json.dumps(runs[-100:], ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def can_run(task: dict[str, Any]) -> Optional[str]:
+    """実行できない理由（できるなら None）。"""
+    if (task.get("実行区分") or "") not in AI_KINDS:
+        return "このタスクは人が対応するタスクです（シートの実行区分が「AI」「AI＋人」のものだけ実行できます）"
+    if any(s in (task.get("ステータス") or "") for s in ("完了", "中止")):
+        return "このタスクは完了（または中止）になっています"
+    return None
+
+
+def build_prompt(task: dict[str, Any]) -> str:
+    keys = ("ID", "タスク", "成果物・完了条件", "KPI", "期限", "実行区分", "AIの担当範囲・人の作業", "備考")
+    return PROMPT.format(**{k: (str(task.get(k)) if task.get(k) not in (None, "") else "—") for k in keys})
+
+
+def command(prompt: str, exe: str) -> list[str]:
+    return [exe, "-p", prompt, "--output-format", "json", "--permission-mode", "acceptEdits",
+            "--allowedTools", *ALLOWED_TOOLS, "--disallowedTools", *DISALLOWED_TOOLS]
+
+
+def start(task: dict[str, Any], *, popen=subprocess.Popen) -> dict[str, Any]:
+    why = can_run(task)
+    if why:
+        return {"ok": False, "message": why}
+    exe = claude_bin()
+    if not exe:
+        return {"ok": False, "message": "Claude Code（claude コマンド）が見つかりません。インストールしてログインしてください"}
+    with _lock:
+        poll()
+        runs = _load()
+        if any(r["status"] == "running" for r in runs):
+            return {"ok": False, "message": "ほかのタスクをAIが実行中です。終わってから実行してください"}
+        run_id = f"{task['ID']}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        RUN_DIR.mkdir(parents=True, exist_ok=True)
+        out = open(RUN_DIR / f"{run_id}.json", "w", encoding="utf-8")
+        err = open(RUN_DIR / f"{run_id}.err", "w", encoding="utf-8")
+        env = {**os.environ, "PATH": f"{Path(exe).parent}:{os.environ.get('PATH', '')}"}
+        proc = popen(command(build_prompt(task), exe), cwd=str(ROOT), stdout=out, stderr=err, stdin=subprocess.DEVNULL, env=env)
+        _procs[run_id] = proc
+        runs.append({"id": run_id, "task_id": task["ID"], "task": task.get("タスク"), "status": "running",
+                     "started_at": _now(), "started_ts": time.time(), "pid": proc.pid})
+        _save(runs)
+    return {"ok": True, "message": f"{task['ID']} をAIで実行し始めました。数分〜数十分かかります", "run_id": run_id}
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _finish(r: dict[str, Any], code: Optional[int]) -> None:
+    raw = ""
+    try:
+        raw = (RUN_DIR / f"{r['id']}.json").read_text(encoding="utf-8")
+        data = json.loads(raw)
+        report, failed = str(data.get("result") or ""), bool(data.get("is_error"))
+        r["cost_usd"] = data.get("total_cost_usd")
+    except Exception:  # noqa: BLE001
+        errtxt = ""
+        try:
+            errtxt = (RUN_DIR / f"{r['id']}.err").read_text(encoding="utf-8")[-2000:]
+        except OSError:
+            pass
+        report, failed = (raw[-4000:] or errtxt or "出力がありませんでした"), True
+    if code not in (0, None):
+        failed = True
+    if failed and "authenticate" in report:
+        report += "\n\nClaude Code のログインが切れています。ターミナルで `claude` を起動し、/login でログインし直してから再実行してください。"
+    (RUN_DIR / f"{r['id']}.md").write_text(report, encoding="utf-8")
+    r.update(status="failed" if failed else "done", finished_at=_now(), report=report[:20000])
+
+
+def poll() -> list[dict[str, Any]]:
+    """実行中のものの終了を確認して記録を更新し、新しい順に返す。"""
+    runs = _load()
+    changed = False
+    for r in runs:
+        if r["status"] != "running":
+            continue
+        proc = _procs.get(r["id"])
+        code = proc.poll() if proc else (None if _alive(r["pid"]) else 0)
+        if code is None and time.time() - r.get("started_ts", 0) > TIMEOUT_SEC:
+            (proc.kill() if proc else os.kill(r["pid"], 15))
+            code = -1
+            r["timeout"] = True
+        if code is not None:
+            _finish(r, code)
+            _procs.pop(r["id"], None)
+            changed = True
+    if changed:
+        _save(runs)
+    return runs[::-1]
+
+
+def summary(limit: int = 20) -> dict[str, Any]:
+    with _lock:
+        runs = poll()
+    return {"available": bool(claude_bin()), "runs": [{k: v for k, v in r.items() if k not in ("started_ts", "pid")} for r in runs[:limit]]}
