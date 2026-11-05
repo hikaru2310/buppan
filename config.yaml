@@ -365,7 +365,7 @@ fx:
 # sheet_id は公開リポジトリに載せないよう config.local.yaml に書く（plan: sheet_id: "..."）
 plan:
   sheet_id: null
-  start_month: "2026-09"   # 計画の1か月目
+  start_month: "2026-11"   # 計画の1か月目
   refresh_hours: 6
 
 # 1件あたりの費用（計画シート「ユニットエコノミクス」と同じ構成）

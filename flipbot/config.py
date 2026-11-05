@@ -56,8 +56,8 @@ class PlanSource(BaseModel):
     """事業計画マスター（Googleスプレッドシート）。数値の正本はシート。"""
 
     sheet_id: Optional[str] = None
-    # 計画の1か月目（例: "2026-09"）
-    start_month: str = "2026-09"
+    # 計画の1か月目（例: "2026-11"）
+    start_month: str = "2026-11"
     # 何時間ごとにシートを読み直すか
     refresh_hours: float = 6
 
