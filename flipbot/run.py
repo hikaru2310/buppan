@@ -40,6 +40,11 @@ def build_parser() -> argparse.ArgumentParser:
     login = sub.add_parser("login", help="手動でログイン/人間確認してプロファイル保存")
     login.add_argument("--config", default="./config.yaml")
 
+    val = sub.add_parser("value", help="ジャンルの監視価値（1日あたりの期待利益）を一覧表示（DBを読むだけ）")
+    val.add_argument("--config", default="./config.yaml")
+    val.add_argument("--days", type=float, default=3, help="何日分の取得結果で計算するか")
+    val.add_argument("--csv", default=None, help="結果をCSVにも保存するパス")
+
     doc = sub.add_parser("doctor", help="設定・Chromeプロファイルロック等を診断")
     doc.add_argument("--config", default="./config.yaml")
     return p
@@ -71,12 +76,47 @@ async def run_once(cfg_path: str, *, source: Optional[str] = None, sort_by: str 
     return 0
 
 
+def run_value(cfg_path: str, *, days: float, csv_path: Optional[str]) -> int:
+    from rich.table import Table
+
+    from . import db
+    from .genre_value import genre_values
+
+    cfg = load_config(cfg_path)
+    con = db.connect(cfg.app.db_path)
+    rows = genre_values(cfg, con, days=days)
+    basis = {"sold": "売れた相場", "active": "暫定", None: "相場なし"}
+    t = Table(title=f"ジャンルの監視価値（直近{days:g}日）")
+    for c in ("ジャンル", "相場", "新着/日", "見た出品", "照合率", "基準を満たす", "平均利益", "価値/日"):
+        t.add_column(c, justify="left" if c in ("ジャンル", "相場") else "right")
+    for r in rows:
+        t.add_row(
+            r["name"], basis[r["basis"]],
+            "-" if r["inflow_per_day"] is None else f"{r['inflow_per_day']:.0f}",
+            str(r["listings"]), f"{r['match_rate']:.0%}", f"{r['passed']}（{r['pass_rate']:.1%}）",
+            f"{r['avg_profit_jpy']:,}" if r["passed"] else "-",
+            "-" if r["value_per_day_jpy"] is None else f"{r['value_per_day_jpy']:,}",
+        )
+    Console().print(t)
+    if csv_path:
+        import csv
+
+        with open(csv_path, "w", newline="", encoding="utf-8-sig") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()) if rows else ["id"])
+            w.writeheader()
+            w.writerows(rows)
+    return 0
+
+
 def main() -> int:
     args = build_parser().parse_args()
     cfg_path: str = args.config
 
     if args.cmd == "doctor":
         return run_doctor(cfg_path)
+
+    if args.cmd == "value":
+        return run_value(cfg_path, days=args.days, csv_path=args.csv)
 
     if args.cmd == "login":
         cfg = load_config(cfg_path)

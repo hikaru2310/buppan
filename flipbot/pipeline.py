@@ -645,17 +645,67 @@ def rank_target(
     return out, stats
 
 
+def mercari_inflow(con, *, days: float = 7) -> dict[str, dict[str, Any]]:
+    """ジャンルごとの新着の流入量。{target_id: {"per_hour": 1時間あたりの新着（未計測はNone）, "last": 最終取得時刻}}。
+    直近 days 日のスナップショットを古い順に見て、前回までに見ていない出品を新着として数える（期間内の最初の1回は基準なので数えない）。"""
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+    snaps: dict[str, dict[int, tuple[str, set[str]]]] = {}
+    for r in con.execute(
+        "SELECT s.id, s.target_id, s.captured_at, m.item_id FROM snapshots s LEFT JOIN mercari_listings m ON m.snapshot_id=s.id "
+        "WHERE s.source='mercari' AND s.captured_at > ? ORDER BY s.id", (since,)
+    ):
+        _, items = snaps.setdefault(r["target_id"], {}).setdefault(r["id"], (r["captured_at"], set()))
+        if r["item_id"]:
+            items.add(r["item_id"])
+    out: dict[str, dict[str, Any]] = {}
+    for tid, by_id in snaps.items():
+        seen: set[str] = set()
+        new = 0
+        hours = 0.0
+        prev: Optional[datetime] = None
+        for at, items in by_id.values():
+            t = datetime.fromisoformat(at)
+            if prev is not None and items:  # 0件（止められた等）の回は数えない
+                new += len(items - seen)
+                hours += (t - prev).total_seconds() / 3600
+            if items:
+                seen |= items
+                prev = t
+        last = next(reversed(by_id.values()))[0]
+        out[tid] = {"per_hour": new / hours if hours > 0 else None, "last": last}
+    return out
+
+
 def select_targets(con, cfg: Config, *, rotate: bool) -> list[Target]:
-    """今回取得するジャンル。設定ジャンルは genres_per_scan 件ずつ順番に回し、マスターは毎回入れる。"""
+    """今回取得するジャンル。マスターは毎回入れる。
+    inflow: 「前回からたまっていそうな新着の数（流入量×経過時間）」が多いジャンルから genres_per_scan 件。
+            未計測のジャンルと genre_max_interval_hours 以上見ていないジャンルは最優先。
+    rotate: genres_per_scan 件ずつ順番に回す。"""
     if cfg.app.scan_mode == "masters_only":
         return master_targets(con)
     genres = active_genres(con, cfg)
     n = cfg.app.genres_per_scan
     if rotate and n and len(genres) > n:
-        start = int(db.get_setting(con, "rotation_index", "0") or 0) % len(genres)
-        genres = [genres[(start + i) % len(genres)] for i in range(n)]
-        db.set_setting(con, "rotation_index", (start + n) % len(active_genres(con, cfg)))
-        con.commit()
+        if cfg.app.scan_schedule == "inflow":
+            flow = mercari_inflow(con)
+            now = datetime.now(timezone.utc)
+
+            def backlog(t: Target) -> float:
+                f = flow.get(t.id)
+                if not f or f["per_hour"] is None:
+                    return float("inf")
+                hours = (now - datetime.fromisoformat(f["last"])).total_seconds() / 3600
+                if hours >= cfg.app.genre_max_interval_hours:
+                    return float("inf")
+                return f["per_hour"] * hours
+
+            # 同点（未計測どうし等）は最後に見た時刻が古い順
+            genres = sorted(genres, key=lambda t: (-backlog(t), (flow.get(t.id) or {}).get("last", "")))[:n]
+        else:
+            start = int(db.get_setting(con, "rotation_index", "0") or 0) % len(genres)
+            genres = [genres[(start + i) % len(genres)] for i in range(n)]
+            db.set_setting(con, "rotation_index", (start + n) % len(active_genres(con, cfg)))
+            con.commit()
     return [*genres, *master_targets(con)]
 
 

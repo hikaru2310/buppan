@@ -41,6 +41,17 @@ PHRASES: dict[str, str] = {
     "ai-s": "ais",
     "ais": "ais",
     "ニッコール": "nikkor",
+    # 「GR DIGITAL」「IXY DIGITAL」は「GR」「IXY」とは別の機種シリーズ（GR DIGITAL III ≠ GR III）
+    "gr digital": "grdigital",
+    "ixy digital": "ixydigital",
+    "ビオゴン": "biogon",
+    "ゾナー": "sonnar",
+    "プラナー": "planar",
+    "ディスタゴン": "distagon",
+    "テッサー": "tessar",
+    "タクマー": "takumar",
+    "ロッコール": "rokkor",
+    "ズイコー": "zuiko",
     "コンタックス": "contax",
     "リコー": "ricoh",
     "ペンタックス67": "pentax 67",
@@ -137,6 +148,8 @@ STOPWORDS: set[str] = {
 _PHRASE_KEYS = sorted(PHRASES, key=len, reverse=True)
 # 型番: 英字と数字を両方含む塊（DMG-01, AGS-101, D750, 116610LN, GWF-A1000 など）
 _MODEL_RE = re.compile(r"\b(?=[a-z0-9-]*\d)(?=[a-z0-9-]*[a-z])[a-z0-9]+(?:-[a-z0-9]+)*\b")
+# 型番ではない英数字（焦点距離・ズーム域「14-42mm」、倍率「2x」、F値）
+_NOT_MODEL_RE = re.compile(r"\d+(?:-\d+)?mm|\d+x|f\d+|\d+mp")
 _SPLIT_RE = re.compile(r"[^\w\-]+", re.UNICODE)
 _SCRIPT_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[^\x00-\x7f])|(?<=[^\x00-\x7f])(?=[a-z0-9])")
 
@@ -147,6 +160,8 @@ def normalize(text: str) -> str:
     for k in _PHRASE_KEYS:
         if k in s:
             s = s.replace(k, f" {PHRASES[k]} ")
+    # 「GR III x」→「gr iiix」（GR III と別機種の GR IIIx を区別するため、x を前の世代表記にくっつける）
+    s = re.sub(r"\b(ii|iii|iv|v)\s+x\b", r"\1x", s)
     # 英数字と日本語の境目に空白を入れる（"dmg-01動作確認" → "dmg-01 動作確認"）
     s = _SCRIPT_BOUNDARY_RE.sub(" ", s)
     return re.sub(r"\s+", " ", s).strip()
@@ -156,7 +171,7 @@ def model_numbers(norm: str) -> set[str]:
     """正規化済み文字列から型番を抽出（ハイフンは保持。比較側で揺れを吸収する）。"""
     out: set[str] = set()
     for m in _MODEL_RE.findall(norm):
-        if len(m) < 3:
+        if len(m) < 3 or _NOT_MODEL_RE.fullmatch(m):
             continue
         out.add(m)
     return out

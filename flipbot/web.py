@@ -50,7 +50,7 @@ from . import ops
 from . import plan as plan_mod
 from .config import Config, load_config
 from .interactive import ebay_login_until_ready
-from .pipeline import active_genres, all_genres, ebay_import_status, import_ebay_page, scan_all
+from .pipeline import active_genres, all_genres, ebay_import_status, import_ebay_page, mercari_inflow, scan_all
 from .sources import sample_targets
 
 INDEX_HTML = Path(__file__).parent / "web" / "index.html"
@@ -220,6 +220,8 @@ class AppState:
             genres_all = [{**t.model_dump(), "active": on, "custom": custom} for t, on, custom in all_genres(con, cfg)]
             ebay_status = ebay_import_status(cfg, con)
             active_list = active_genres(con, cfg)
+            inflow = mercari_inflow(con)
+            inflow_per_day = round(sum(f["per_hour"] or 0 for f in inflow.values()) * 24)
             rate, rate_src, rate_at = fx_mod.current_rate(cfg)
             cfg.fx.jpy_per_usd = round(rate, 2)
             plan = plan_mod.load(cfg)
@@ -249,6 +251,8 @@ class AppState:
                 "category_excludes": cfg.category_excludes,
                 "auto_scan_minutes": cfg.app.auto_scan_minutes,
                 "genres_per_scan": cfg.app.genres_per_scan,
+                "scan_schedule": cfg.app.scan_schedule,
+                "mercari_inflow_per_day": inflow_per_day,
                 "scan_mode": cfg.app.scan_mode,
                 "ebay_fetch": cfg.app.ebay_fetch,
                 "ebay_api": {"configured": bool(cfg.ebay_api.client_id and cfg.ebay_api.client_secret),
@@ -585,6 +589,11 @@ def _make_handler(state: AppState):
                 q = parse_qs(urlparse(self.path).query)
                 month = int(q["month"][0]) if q.get("month") else None
                 self._send(200, state.kpi_tsv(month).encode("utf-8"), "text/plain; charset=utf-8")
+            elif not path.startswith("/api/"):
+                # 画面の知らないURL（リンクに句読点がくっついた等）はトップへ戻す
+                self.send_response(302)
+                self.send_header("Location", "/")
+                self.end_headers()
             else:
                 self._send(404, b"not found", "text/plain")
 

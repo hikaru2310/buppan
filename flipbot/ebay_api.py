@@ -115,20 +115,28 @@ class EbayApi:
 
     # ---------------------------------------------------------------- Browse（出品中）
     def active(self, query: str, category_ids: Optional[list[str]] = None) -> dict[str, Any]:
-        """出品中（即決）の件数と価格帯。"""
-        d = self._get(BROWSE_URL, {"q": query, "limit": 200, "category_ids": ",".join(category_ids or []) or None,
-                                   "filter": "buyingOptions:{FIXED_PRICE}"}, SCOPE_BASE)
+        """出品中（即決）の件数と価格帯。Browse API はカテゴリIDを1回に1つしか受け付けないので、カテゴリごとに呼んで合算する。"""
         items: list[EbaySold] = []
-        for it in d.get("itemSummaries") or []:
-            try:
-                p = float(it["price"]["value"])
-                ship = float((it.get("shippingOptions") or [{}])[0].get("shippingCost", {}).get("value") or 0)
-            except (KeyError, TypeError, ValueError):
-                continue
-            items.append(EbaySold(title=(it.get("title") or "")[:200], price_usd=p, shipping_usd=ship, total_usd=p + ship,
-                                  url=it.get("itemWebUrl") or "", condition=_condition(it.get("conditionId"), it.get("condition", ""))))
+        seen: set[str] = set()
+        total = 0
+        for cat in category_ids or [None]:
+            d = self._get(BROWSE_URL, {"q": query, "limit": 200, "category_ids": cat,
+                                       "filter": "buyingOptions:{FIXED_PRICE}"}, SCOPE_BASE)
+            total += int(d.get("total") or 0)
+            for it in d.get("itemSummaries") or []:
+                try:
+                    p = float(it["price"]["value"])
+                    ship = float((it.get("shippingOptions") or [{}])[0].get("shippingCost", {}).get("value") or 0)
+                except (KeyError, TypeError, ValueError):
+                    continue
+                url = it.get("itemWebUrl") or ""
+                if url and url in seen:
+                    continue
+                seen.add(url)
+                items.append(EbaySold(title=(it.get("title") or "")[:200], price_usd=p, shipping_usd=ship, total_usd=p + ship,
+                                      url=url, condition=_condition(it.get("conditionId"), it.get("condition", ""))))
         prices = sorted(i.total_usd for i in items)
-        return {"total": int(d.get("total") or len(prices)), "n": len(prices), "items": items,
+        return {"total": total or len(prices), "n": len(prices), "items": items,
                 "median_usd": prices[len(prices) // 2] if prices else None, "min_usd": prices[0] if prices else None}
 
     # ---------------------------------------------------------------- Marketplace Insights（売れた商品）

@@ -17,7 +17,9 @@ app:
   # 画面版の自動スキャン間隔（分）。0で止める。Macを閉じても動かすには pmset の設定も必要（README参照）
   auto_scan_minutes: 60
   auto_scan_jitter: 0.2      # 間隔を毎回±20%ずらす
-  genres_per_scan: 5         # 1回に回すジャンル数（順番に回す。マスターは毎回）。メルカリへのアクセスを人の閲覧程度に
+  genres_per_scan: 5         # 1回に回すジャンル数（マスターは毎回）。メルカリへのアクセスを人の閲覧程度に（1日約120ページ）
+  scan_schedule: inflow      # inflow = 新着がたまっていそうなジャンルから回す / rotate = 順番に
+  genre_max_interval_hours: 24  # 新着が少ないジャンルでも、この時間以上は空けない
   mercari_pause_hours: 3     # 403/429・人間確認・急な0件で一時停止（連続するたびに倍、最大24時間）
   mercari_pause_max_hours: 24
   # live: 実サイト収集 / sample: 同梱サンプル / auto: 実サイトが0件ならサンプルで代替
@@ -42,143 +44,286 @@ app:
 #   plan_ids : 計画シート「当たりジャンル商品DB」のID（どの仮説を検証しているか）
 #   shipping_cost_jpy : 国際送料の見込み（サイズ別の概算。実費で更新）
 # ※ 2026-10 に低単価ゲーム機（初代GB・ファミコン等）を外しました（ゲーム・限定品の貢献利益下限8,000円に届かないため）
+# ※ 2026-10-30 監視を月3万件へ広げるため、型番単位の検索語をメーカー・シリーズ単位に広げました（型番はツールの照合で振り分け）。
+#   どのジャンルを何時間おきに見るかは、新着の多さで自動で決まります（app.scan_schedule: inflow）
 genres:
-  - id: "nikon-ais-50-14"
-    name: "Nikon Ai-s 50mm F1.4"
+  # --- カメラ・交換レンズ：オールドレンズ（メーカー・シリーズ単位で広く取り、型番はツールの照合で振り分け）
+  - id: "nikon-ai-lens"
+    name: "Nikon Ai / Ai-s レンズ"
     category: "カメラ・交換レンズ"
     plan_ids: ["P001"]
-    mercari_query: "Nikon Ai-s 50mm F1.4"
-    ebay_query: "Nikon Ai-s 50mm f/1.4 lens"
+    mercari_query: "Nikon Ai-s"
+    ebay_query: "Nikon Ai-s lens"
     ebay_category_ids: ["3323"]
     shipping_cost_jpy: 3500
-  - id: "nikon-ais-105-25"
-    name: "Nikon Ai-s 105mm F2.5"
+  - id: "nikon-ai-lens-ja"
+    name: "ニコン Ai レンズ（日本語表記）"
     category: "カメラ・交換レンズ"
     plan_ids: ["P001"]
-    mercari_query: "Nikon Ai-s 105mm F2.5"
-    ebay_query: "Nikon Ai-s 105mm f/2.5 lens"
+    mercari_query: "ニコン Ai レンズ"
+    ebay_query: "Nikon Ai lens"
     ebay_category_ids: ["3323"]
     shipping_cost_jpy: 3500
-  - id: "canon-fd-50-14"
-    name: "Canon FD 50mm F1.4"
+  - id: "canon-fd-lens"
+    name: "Canon FD レンズ"
     category: "カメラ・交換レンズ"
     plan_ids: ["P002"]
-    mercari_query: "Canon FD 50mm F1.4"
-    ebay_query: "Canon FD 50mm f/1.4 lens"
+    mercari_query: "Canon FD"
+    ebay_query: "Canon FD lens"
     ebay_category_ids: ["3323"]
     shipping_cost_jpy: 3500
-  - id: "canon-fd-85-18"
-    name: "Canon FD 85mm F1.8"
+  - id: "canon-fd-lens-ja"
+    name: "キヤノン FD レンズ（日本語表記）"
     category: "カメラ・交換レンズ"
     plan_ids: ["P002"]
-    mercari_query: "Canon FD 85mm F1.8"
-    ebay_query: "Canon FD 85mm f/1.8 lens"
+    mercari_query: "キヤノン FD レンズ"
+    ebay_query: "Canon FD lens"
     ebay_category_ids: ["3323"]
     shipping_cost_jpy: 3500
-  - id: "pentax67-105"
-    name: "PENTAX 67 105mm F2.4"
+  - id: "super-takumar"
+    name: "Super Takumar"
+    category: "カメラ・交換レンズ"
+    plan_ids: ["P001"]
+    mercari_query: "Super Takumar"
+    ebay_query: "Super Takumar lens"
+    ebay_category_ids: ["3323"]
+    shipping_cost_jpy: 3500
+  - id: "minolta-rokkor"
+    name: "ミノルタ ロッコール"
+    category: "カメラ・交換レンズ"
+    plan_ids: ["P001"]
+    mercari_query: "ロッコール"
+    ebay_query: "Minolta Rokkor lens"
+    ebay_category_ids: ["3323"]
+    shipping_cost_jpy: 3500
+  - id: "pentax67"
+    name: "PENTAX 67 / 6x7"
     category: "カメラ・交換レンズ"
     plan_ids: ["P003"]
-    mercari_query: "PENTAX 67 105mm F2.4"
-    ebay_query: "Pentax 67 105mm f/2.4 lens"
-    ebay_category_ids: ["3323"]
-    shipping_cost_jpy: 5000
-  - id: "contax-t2"
-    name: "CONTAX T2"
+    mercari_query: "PENTAX 67"
+    ebay_query: "Pentax 67"
+    ebay_category_ids: ["3323", "15230"]
+    shipping_cost_jpy: 5500
+  - id: "mamiya"
+    name: "Mamiya（中判）"
+    category: "カメラ・交換レンズ"
+    plan_ids: ["P003"]
+    mercari_query: "Mamiya"
+    ebay_query: "Mamiya camera"
+    ebay_category_ids: ["15230", "3323"]
+    shipping_cost_jpy: 6000
+  # --- カメラ・交換レンズ：フィルムカメラ
+  - id: "contax"
+    name: "CONTAX"
     category: "カメラ・交換レンズ"
     plan_ids: ["P004"]
-    mercari_query: "CONTAX T2"
-    ebay_query: "Contax T2 film camera"
+    mercari_query: "CONTAX"
+    ebay_query: "Contax camera"
+    ebay_category_ids: ["15230", "3323"]
+    shipping_cost_jpy: 4000
+  - id: "nikon-film"
+    name: "ニコン フィルムカメラ"
+    category: "カメラ・交換レンズ"
+    plan_ids: []
+    mercari_query: "ニコン フィルムカメラ"
+    ebay_query: "Nikon film camera"
     ebay_category_ids: ["15230"]
     shipping_cost_jpy: 4000
-  - id: "ricoh-gr3"
-    name: "RICOH GR III"
+  - id: "canon-film"
+    name: "キヤノン フィルムカメラ"
     category: "カメラ・交換レンズ"
-    plan_ids: ["P005"]
-    mercari_query: "RICOH GR III"
-    ebay_query: "Ricoh GR III digital camera"
-    ebay_category_ids: ["31388"]
+    plan_ids: []
+    mercari_query: "キヤノン フィルムカメラ"
+    ebay_query: "Canon film camera"
+    ebay_category_ids: ["15230"]
     shipping_cost_jpy: 4000
-  - id: "fujifilm-x100v"
-    name: "FUJIFILM X100V"
+  - id: "olympus-om"
+    name: "オリンパス OM"
+    category: "カメラ・交換レンズ"
+    plan_ids: []
+    mercari_query: "オリンパス OM"
+    ebay_query: "Olympus OM camera"
+    ebay_category_ids: ["15230", "3323"]
+    shipping_cost_jpy: 4000
+  - id: "pentax-film"
+    name: "ペンタックス フィルムカメラ"
+    category: "カメラ・交換レンズ"
+    plan_ids: []
+    mercari_query: "ペンタックス フィルムカメラ"
+    ebay_query: "Pentax film camera"
+    ebay_category_ids: ["15230"]
+    shipping_cost_jpy: 4000
+  - id: "minolta-film"
+    name: "ミノルタ フィルムカメラ"
+    category: "カメラ・交換レンズ"
+    plan_ids: []
+    mercari_query: "ミノルタ フィルムカメラ"
+    ebay_query: "Minolta film camera"
+    ebay_category_ids: ["15230"]
+    shipping_cost_jpy: 4000
+  - id: "film-compact"
+    name: "コンパクトフィルムカメラ"
+    category: "カメラ・交換レンズ"
+    plan_ids: ["P004"]
+    mercari_query: "コンパクトフィルムカメラ"
+    ebay_query: "film point and shoot camera"
+    ebay_category_ids: ["15230"]
+    shipping_cost_jpy: 3500
+  # --- カメラ・交換レンズ：デジタルカメラ（P005 中古コンデジ・ミラーレス）
+  - id: "ricoh-gr"
+    name: "RICOH GR シリーズ"
     category: "カメラ・交換レンズ"
     plan_ids: ["P005"]
-    mercari_query: "FUJIFILM X100V"
-    ebay_query: "Fujifilm X100V"
+    mercari_query: "RICOH GR"
+    ebay_query: "Ricoh GR camera"
+    ebay_category_ids: ["31388", "15230"]
+    shipping_cost_jpy: 4000
+  - id: "fujifilm-x100"
+    name: "FUJIFILM X100 シリーズ"
+    category: "カメラ・交換レンズ"
+    plan_ids: ["P005"]
+    mercari_query: "FUJIFILM X100"
+    ebay_query: "Fujifilm X100"
     ebay_category_ids: ["31388"]
     shipping_cost_jpy: 4500
-  - id: "nikon-fm2"
-    name: "Nikon FM2"
+  - id: "fujifilm-xt"
+    name: "FUJIFILM X-T シリーズ"
     category: "カメラ・交換レンズ"
-    plan_ids: []
-    mercari_query: "Nikon FM2 ボディ"
-    ebay_query: "Nikon FM2 film camera body"
-    ebay_category_ids: ["15230"]
-    shipping_cost_jpy: 4000
-  - id: "nikon-f3"
-    name: "Nikon F3"
+    plan_ids: ["P005"]
+    mercari_query: "FUJIFILM X-T"
+    ebay_query: "Fujifilm X-T camera"
+    ebay_category_ids: ["31388"]
+    shipping_cost_jpy: 4500
+  - id: "sony-rx100"
+    name: "SONY RX100 シリーズ"
     category: "カメラ・交換レンズ"
-    plan_ids: []
-    mercari_query: "ニコン F3 ボディ"
-    ebay_query: "Nikon F3 film camera body"
-    ebay_category_ids: ["15230"]
-    shipping_cost_jpy: 4000
-    # 0001_sedori 2026-06 実データ: eBay Sold 中央値 $360・60件
-  - id: "olympus-om1"
-    name: "OLYMPUS OM-1"
+    plan_ids: ["P005"]
+    mercari_query: "SONY RX100"
+    ebay_query: "Sony RX100"
+    ebay_category_ids: ["31388"]
+    shipping_cost_jpy: 3500
+  - id: "canon-g7x"
+    name: "Canon PowerShot G7 X"
     category: "カメラ・交換レンズ"
-    plan_ids: []
-    mercari_query: "オリンパス OM-1 ボディ"
-    ebay_query: "Olympus OM-1 film camera body"
-    ebay_category_ids: ["15230"]
-    shipping_cost_jpy: 4000
-  - id: "canon-ae1p"
-    name: "Canon AE-1 PROGRAM"
+    plan_ids: ["P005"]
+    mercari_query: "PowerShot G7 X"
+    ebay_query: "Canon PowerShot G7 X"
+    ebay_category_ids: ["31388"]
+    shipping_cost_jpy: 3500
+  - id: "canon-ixy"
+    name: "Canon IXY（CCDコンデジ）"
     category: "カメラ・交換レンズ"
-    plan_ids: []
-    mercari_query: "Canon AE-1 PROGRAM"
-    ebay_query: "Canon AE-1 Program film camera"
-    ebay_category_ids: ["15230"]
+    plan_ids: ["P005"]
+    mercari_query: "Canon IXY"
+    ebay_query: "Canon IXY digital camera"
+    ebay_category_ids: ["31388"]
+    shipping_cost_jpy: 3000
+  - id: "sony-cybershot"
+    name: "SONY Cyber-shot（CCDコンデジ）"
+    category: "カメラ・交換レンズ"
+    plan_ids: ["P005"]
+    mercari_query: "Cyber-shot"
+    ebay_query: "Sony Cyber-shot digital camera"
+    ebay_category_ids: ["31388"]
+    shipping_cost_jpy: 3000
+  - id: "olympus-pen"
+    name: "OLYMPUS PEN"
+    category: "カメラ・交換レンズ"
+    plan_ids: ["P005"]
+    mercari_query: "OLYMPUS PEN"
+    ebay_query: "Olympus PEN camera"
+    ebay_category_ids: ["31388", "15230"]
     shipping_cost_jpy: 4000
-  - id: "3ds-ll"
-    name: "ニンテンドー3DS LL"
+  # --- ゲーム・限定品：本体（P010）
+  - id: "3ds-console"
+    name: "ニンテンドー3DS / 2DS 本体"
     category: "ゲーム・限定品"
     plan_ids: ["P010"]
-    mercari_query: "ニンテンドー3DS LL 本体"
-    ebay_query: "Nintendo 3DS XL console Japan"
+    mercari_query: "ニンテンドー3DS 本体"
+    ebay_query: "Nintendo 3DS console Japan"
     ebay_category_ids: ["139971"]
     shipping_cost_jpy: 3000
-  - id: "gba-sp"
-    name: "ゲームボーイアドバンスSP（AGS-101）"
+  - id: "gba-sp-all"
+    name: "ゲームボーイアドバンスSP"
     category: "ゲーム・限定品"
     plan_ids: ["P010"]
-    mercari_query: "ゲームボーイアドバンスSP AGS-101"
-    ebay_query: "Game Boy Advance SP AGS-101"
+    mercari_query: "ゲームボーイアドバンスSP"
+    ebay_query: "Game Boy Advance SP console"
     ebay_category_ids: ["139971"]
     shipping_cost_jpy: 2500
-  - id: "gbl-astroboy"
-    name: "ゲームボーイライト アストロボーイ"
+  - id: "gameboy-light"
+    name: "ゲームボーイライト"
     category: "ゲーム・限定品"
     plan_ids: ["P012"]
-    mercari_query: "ゲームボーイライト アストロボーイ"
-    ebay_query: "Game Boy Light Astro Boy"
+    mercari_query: "ゲームボーイライト"
+    ebay_query: "Game Boy Light console"
     ebay_category_ids: ["139971"]
     shipping_cost_jpy: 2500
+  - id: "gameboy-color"
+    name: "ゲームボーイカラー 本体"
+    category: "ゲーム・限定品"
+    plan_ids: ["P010"]
+    mercari_query: "ゲームボーイカラー 本体"
+    ebay_query: "Game Boy Color console Japan"
+    ebay_category_ids: ["139971"]
+    shipping_cost_jpy: 2500
+  - id: "ps-vita"
+    name: "PlayStation Vita 本体"
+    category: "ゲーム・限定品"
+    plan_ids: ["P012"]
+    mercari_query: "PS Vita 本体"
+    ebay_query: "PS Vita console Japan"
+    ebay_category_ids: ["139971"]
+    shipping_cost_jpy: 3000
+  # --- ゲーム・限定品：日本版ソフト・限定版（P011・P012）。ソフト単体（ソフトのみ）はカテゴリの除外語で外れる
+  - id: "sfc-soft"
+    name: "スーパーファミコン ソフト（箱説）"
+    category: "ゲーム・限定品"
+    plan_ids: ["P011"]
+    mercari_query: "スーパーファミコン 箱説"
+    ebay_query: "Super Famicom complete in box"
+    ebay_category_ids: ["139973"]
+    shipping_cost_jpy: 2500
+  - id: "n64-soft"
+    name: "ニンテンドー64 ソフト（箱説）"
+    category: "ゲーム・限定品"
+    plan_ids: ["P011"]
+    mercari_query: "ニンテンドー64 箱説"
+    ebay_query: "Nintendo 64 Japanese complete in box"
+    ebay_category_ids: ["139973"]
+    shipping_cost_jpy: 2500
+  - id: "gba-soft"
+    name: "ゲームボーイアドバンス ソフト（箱説）"
+    category: "ゲーム・限定品"
+    plan_ids: ["P011"]
+    mercari_query: "ゲームボーイアドバンス 箱説"
+    ebay_query: "Game Boy Advance Japanese complete in box"
+    ebay_category_ids: ["139973"]
+    shipping_cost_jpy: 2000
+  - id: "game-limited"
+    name: "ゲーム 限定版・特典付き"
+    category: "ゲーム・限定品"
+    plan_ids: ["P012"]
+    mercari_query: "ゲーム 限定版"
+    ebay_query: "limited edition video game Japan"
+    ebay_category_ids: ["139973"]
+    shipping_cost_jpy: 3000
+  # --- 音響・楽器・電子機器
   - id: "boss-pedal"
     name: "BOSS エフェクター（日本製）"
     category: "音響・楽器・電子機器"
     plan_ids: ["P013"]
     mercari_query: "BOSS エフェクター 日本製"
     ebay_query: "BOSS pedal made in Japan"
-    ebay_category_ids: ["41407"]
+    ebay_category_ids: ["181222"]
     shipping_cost_jpy: 3000
-  - id: "maxon-od808"
-    name: "Maxon OD808"
+  - id: "maxon-pedal"
+    name: "Maxon エフェクター"
     category: "音響・楽器・電子機器"
     plan_ids: ["P013"]
-    mercari_query: "Maxon OD808"
-    ebay_query: "Maxon OD808 overdrive"
-    ebay_category_ids: ["41407"]
+    mercari_query: "Maxon エフェクター"
+    ebay_query: "Maxon pedal"
+    ebay_category_ids: ["181222"]
     shipping_cost_jpy: 3000
   - id: "walkman-cassette"
     name: "カセットウォークマン"
@@ -188,6 +333,7 @@ genres:
     ebay_query: "Sony Walkman cassette player WM"
     ebay_category_ids: ["15052"]
     shipping_cost_jpy: 3000
+  # --- その他型番商品
   - id: "seiko-6139"
     name: "SEIKO 6139 クロノグラフ"
     category: "その他型番商品"
@@ -270,7 +416,7 @@ category_excludes:
 
 # eBay公式API（キーは config.local.yaml の ebay_api: {client_id: "...", client_secret: "..."} に書く）
 #   ebay_category_ids（各ジャンル）は eBay US のカテゴリID:
-#   3323=カメラレンズ / 15230=フィルムカメラ / 31388=デジタルカメラ / 139971=ゲーム機本体 / 41407=ギターエフェクター / 15052=ポータブルオーディオ / 31387=腕時計（要確認）
+#   3323=カメラレンズ / 15230=フィルムカメラ / 31388=デジタルカメラ / 139971=ゲーム機本体 / 181222=ギターエフェクター（親カテゴリ） / 15052=ポータブルオーディオ / 31387=腕時計 / 139973=ゲームソフト。Browse APIは1回に1カテゴリなので、複数書くとカテゴリごとに呼んで合算
 ebay_api:
   marketplace: EBAY_US
   use_browse: true           # 出品中の件数・価格（競合の数）

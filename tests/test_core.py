@@ -20,7 +20,7 @@ from flipbot import plan as plan_mod  # noqa: E402
 from flipbot.config import Config, Target, load_config  # noqa: E402
 from flipbot.market import demand, select_comps  # noqa: E402
 from flipbot.matching import Comp  # noqa: E402
-from flipbot.pipeline import _pause_mercari, parse_mercari_item_html, scan_all, select_targets  # noqa: E402
+from flipbot.pipeline import _pause_mercari, mercari_inflow, parse_mercari_item_html, scan_all, select_targets  # noqa: E402
 from flipbot.profit import estimate_profit  # noqa: E402
 from flipbot.scrape_ebay import EbaySold, parse_ebay_sold_html, parse_result_count  # noqa: E402
 
@@ -183,8 +183,47 @@ def test_listing_draft():
 
 
 # ------------------------------------------------------------------ 取得の運用
+def test_inflow_schedule():
+    """新着が多くたまっていそうなジャンルを優先し、未計測・長く見ていないジャンルは最優先。"""
+    from datetime import datetime, timedelta, timezone
+
+    cfg = make_cfg()
+    cfg.app.db_path = str(TMP / "inflow.db")
+    con = con_for(cfg)
+    now = datetime.now(timezone.utc)
+    ids = [t.id for t in cfg.all_targets]
+    con.executemany("INSERT OR IGNORE INTO targets(id, name) VALUES(?, ?)", [(t.id, t.name) for t in cfg.all_targets])
+
+    def snap(tid, hours_ago, items):
+        at = (now - timedelta(hours=hours_ago)).isoformat(timespec="seconds")
+        sid = con.execute("INSERT INTO snapshots(target_id, source, captured_at, meta_json) VALUES(?, 'mercari', ?, '{}')", (tid, at)).lastrowid
+        con.executemany("INSERT INTO mercari_listings(snapshot_id, title, price_jpy, shipping_included, status, url, item_id) "
+                        "VALUES(?, 't', 1000, 1, 'on_sale', 'u', ?)", [(sid, i) for i in items])
+
+    busy, quiet, stale = ids[0], ids[1], ids[2]
+    snap(busy, 3, [f"b{i}" for i in range(50)])
+    snap(busy, 1, [f"b{i}" for i in range(20, 90)])  # 2時間で新着40件 → 20件/時
+    snap(quiet, 3, ["q1", "q2"])
+    snap(quiet, 1, ["q1", "q2", "q3"])  # 2時間で1件 → 0.5件/時
+    snap(stale, 30, ["s1"])
+    snap(stale, 26, ["s1", "s2"])  # 26時間見ていない
+    for tid in ids[3:]:
+        snap(tid, 2, ["x" + tid])
+        snap(tid, 1, ["x" + tid])  # 新着0
+    con.commit()
+    flow = mercari_inflow(con)
+    assert round(flow[busy]["per_hour"]) == 20 and flow[quiet]["per_hour"] == 0.5
+    cfg.app.genres_per_scan = 2
+    picked = [t.id for t in select_targets(con, cfg, rotate=True) if not t.is_master]
+    assert picked == [stale, busy], picked
+    cfg.app.genres_per_scan = 3
+    picked = [t.id for t in select_targets(con, cfg, rotate=True) if not t.is_master]
+    assert picked[2] == quiet, "流入が少なくても、たまっている分だけ優先される"
+
+
 def test_rotation_pause_and_sample_scan():
     cfg = make_cfg()
+    cfg.app.scan_schedule = "rotate"
     con = con_for(cfg)
     n = len(cfg.all_targets)
     seen = []
@@ -268,6 +307,12 @@ def test_ebay_api_browse_insights(tmp_token=TMP / "tok.json"):
         it = r["items"][0]
         assert it.total_usd == 300 and it.sold_date == "2026-10-01" and it.condition == "new"
         assert sum(1 for c in calls if "oauth2/token" in c) == 2  # スコープごとに1回
+        t2 = Target(id="p67", name="PENTAX 67", mercari_query="PENTAX 67", ebay_query="Pentax 67", ebay_category_ids=["3323", "15230"])
+        n = len(calls)
+        a2 = _ebay_api_active(cfg, con, t2)
+        browse = [c for c in calls[n:] if "browse" in c]
+        assert len(browse) == 2 and all("%2C" not in c for c in browse), "カテゴリは1回に1つ"
+        assert a2["total"] == 642 and a2["n"] == 3, "同じURLの出品は重複させない（URLのない出品は残す）"
         insights_ok = False
         assert "error" in _ebay_api_sold(cfg, con, t)
         assert db.get_setting(con, "insights_unavailable_until") > db.utc_now_iso()

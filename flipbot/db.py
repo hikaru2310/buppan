@@ -64,6 +64,8 @@ def migrate(con: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_snapshots_target_time
           ON snapshots(target_id, captured_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_mercari_listings_snapshot
+          ON mercari_listings(snapshot_id);
 
         -- 新着検知: 出品を初めて見た時刻を保持
         CREATE TABLE IF NOT EXISTS seen_items (

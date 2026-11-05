@@ -209,7 +209,8 @@ VIEWS.rules=["設定 / ルール・前提",()=>{
     ${row("付属品・別物よけ","相場(円)に対する仕入れ価格の下限比",pct(th.min_price_ratio))}
     ${row("データソース","live / sample / auto",esc(r.data_source))}
     ${row("メルカリの取得方法","browser＝公開の検索ページ / api＝内部検索API（非公式・要判断）",esc(S.settings?.mercari_source||""))}
-    ${row("自動スキャン","画面版の起動中（間隔は毎回±20%ずらす）",S.settings?.auto_scan_minutes?`${S.settings.auto_scan_minutes}分おき・1回${S.settings.genres_per_scan||"全"}ジャンルを順番に`:"停止")}
+    ${row("自動スキャン","画面版の起動中（間隔は毎回±20%ずらす）",S.settings?.auto_scan_minutes?`${S.settings.auto_scan_minutes}分おき・1回${S.settings.genres_per_scan||"全"}ジャンルを${S.settings.scan_schedule==="inflow"?"新着がたまっていそうな順に":"順番に"}`:"停止")}
+    ${row("メルカリの新着","直近7日の流入量（重複なし・全ジャンル合計）",`${(S.settings?.mercari_inflow_per_day??0).toLocaleString()} 件/日（月 ${Math.round((S.settings?.mercari_inflow_per_day??0)*30).toLocaleString()} 件）`)}
     <div class="r"><div>メルカリ取得の自動停止<span>403/429・人間確認・急な0件を検知すると一時停止（連続するたびに長く）</span></div>
       <div>${S.mercari_pause?.active?`<b class="neg">停止中（${dtfmt(S.mercari_pause.until)} まで）</b> <button class="btn sm" id="mResume">今すぐ再開</button><div class="meta">${esc(S.mercari_pause.reason||"")}</div>`:`<b>正常</b>${S.mercari_pause?.strikes?`<span class="meta">（直近の停止 ${S.mercari_pause.strikes}回）</span>`:""}`}</div></div></div>
   <h2><span class="no">§</span>除外語（3階層：全体 ＋ カテゴリ ＋ ジャンル）</h2><div class="card rules">

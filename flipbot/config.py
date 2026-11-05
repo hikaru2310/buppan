@@ -160,6 +160,10 @@ class AppConfig(BaseModel):
     mercari_api_interval: list[float] = Field(default_factory=lambda: [3.0, 7.0])
     # 1回のスキャンで回すジャンル数（0=全部）。順番に回してメルカリへのアクセスを人の閲覧程度に抑える
     genres_per_scan: int = 5
+    # 回すジャンルの選び方: inflow = 新着が多くたまっていそうなジャンルから / rotate = 順番に
+    scan_schedule: str = "inflow"
+    # inflow で、新着が少ないジャンルでもこの時間以上は空けない（時間）
+    genre_max_interval_hours: float = 24
     # 自動スキャン間隔の揺らぎ（±割合）。毎回同じ間隔でアクセスしない
     auto_scan_jitter: float = 0.2
     # 異常（403/429・人間確認・急な0件）を検知したらメルカリ取得を止める時間（時間）。連続するたびに倍、上限あり

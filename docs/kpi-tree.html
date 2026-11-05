@@ -1,0 +1,430 @@
+<title>利益KPIツリー</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* レイアウト: 上から「利益→1件の利益→販売数→リサーチのファネル→在庫・資金→人→品質」と分解を下る1カラム。各ノードは 計画値 / 1日あたり / 今の実測 を同じ位置に置く */
+:root{
+  --bg:#f5f6f4; --surface:#ffffff; --ink:#1d2421; --muted:#5d6762; --line:#d6dbd7;
+  --accent:#17675a; --accent-soft:#e1efeb;
+  --good:#2f7d32; --good-soft:#e5f2e4; --warn:#9a6400; --warn-soft:#fbf0d9; --crit:#b3261e; --crit-soft:#fbe4e2;
+  --f-body:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+  --f-num:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#121614; --surface:#1a201d; --ink:#e6ebe8; --muted:#9aa5a0; --line:#2e3833;
+  --accent:#5cc3ad; --accent-soft:#183a33;
+  --good:#7fcf83; --good-soft:#1c3320; --warn:#e7b65a; --warn-soft:#3a2d12; --crit:#f08a82; --crit-soft:#3d1c1a; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#121614; --surface:#1a201d; --ink:#e6ebe8; --muted:#9aa5a0; --line:#2e3833;
+  --accent:#5cc3ad; --accent-soft:#183a33;
+  --good:#7fcf83; --good-soft:#1c3320; --warn:#e7b65a; --warn-soft:#3a2d12; --crit:#f08a82; --crit-soft:#3d1c1a; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.7}
+.wrap{max-width:980px;margin:0 auto;padding-block:32px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:40px}
+h1{font-size:30px;font-weight:900;margin:0;letter-spacing:.02em;text-wrap:balance}
+h2{font-size:20px;font-weight:700;margin:0 0 4px;text-wrap:balance}
+.lead{color:var(--muted);margin:6px 0 0;max-width:62ch}
+.sec-note{color:var(--muted);margin:0 0 16px;font-size:14px;max-width:65ch}
+.num{font-family:var(--f-num);font-variant-numeric:tabular-nums;font-weight:500}
+.eyebrow{font-size:12px;letter-spacing:.12em;color:var(--accent);font-weight:700}
+
+/* 凡例 */
+.legend{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:13px;color:var(--muted);margin-top:14px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+
+/* 状態チップ */
+.chip{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:1px 10px;font-size:12px;font-weight:700;white-space:nowrap}
+.chip.good{background:var(--good-soft);color:var(--good)}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}
+.chip.crit{background:var(--crit-soft);color:var(--crit)}
+.chip.none{background:transparent;color:var(--muted);border:1px solid var(--line)}
+
+/* 要注意 */
+.alerts{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.alert{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--crit);border-radius:6px;padding:12px 14px;min-width:0}
+.alert.warn{border-left-color:var(--warn)}
+.alert b{display:block;margin-bottom:2px}
+.alert p{margin:0;font-size:14px;color:var(--muted)}
+
+/* ツリー */
+.tree-scroll{overflow-x:auto}
+.tree,.tree ul{list-style:none;margin:0;padding:0}
+.tree ul{margin-left:22px;padding-left:18px;border-left:1.5px solid var(--line)}
+.tree li{position:relative;padding-top:10px}
+.tree ul>li::before{content:"";position:absolute;left:-18px;top:30px;width:16px;border-top:1.5px solid var(--line)}
+.node{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:8px 12px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 16px;align-items:baseline;min-width:280px}
+.node.root{border-color:var(--accent);background:var(--accent-soft)}
+.node .name{font-weight:700}
+.node .val{font-family:var(--f-num);font-variant-numeric:tabular-nums;font-weight:600;text-align:right;white-space:nowrap}
+.node .f{grid-column:1/-1;font-size:13px;color:var(--muted)}
+.node .act{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:13px}
+
+/* ファネル */
+.funnel{display:flex;flex-direction:column;gap:6px}
+.frow{display:grid;grid-template-columns:150px minmax(0,1fr) 92px 120px;gap:12px;align-items:center}
+.frow.head{font-size:12px;color:var(--muted);letter-spacing:.06em}
+.frow .label{font-weight:700;font-size:14px}
+.frow .label small{display:block;font-weight:400;color:var(--muted);font-size:12px}
+.bar{height:22px;background:var(--accent-soft);border-radius:3px;position:relative;overflow:hidden}
+.bar i{position:absolute;inset:0 auto 0 0;background:var(--accent);border-radius:3px}
+.bar em{position:absolute;right:6px;top:0;font-style:normal;font-size:12px;line-height:22px;color:var(--ink);font-family:var(--f-num)}
+.frow .per{text-align:right}
+.frow .now{font-size:12px}
+.conv{font-size:12px;color:var(--muted);padding-left:162px}
+@media (max-width:640px){
+  .frow{grid-template-columns:110px minmax(0,1fr) 70px}
+  .frow .now{grid-column:2/-1}
+  .conv{padding-left:122px}
+  .frow.head span:last-child{display:none}
+}
+
+
+/* 上流の工程 */
+.flow{display:flex;flex-direction:column;gap:0}
+.stage{display:grid;grid-template-columns:44px minmax(0,1fr);gap:0 14px}
+.stage .rail{display:flex;flex-direction:column;align-items:center}
+.stage .dot{width:30px;height:30px;border-radius:50%;background:var(--accent);color:var(--surface);font-family:var(--f-num);font-weight:600;display:grid;place-items:center;font-size:13px;flex:none}
+.stage .stem{flex:1;width:2px;background:var(--line);margin:4px 0}
+.stage:last-child .stem{display:none}
+.stage .body{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:12px 16px;margin-bottom:12px;min-width:0}
+.stage .body h3{margin:0;font-size:16px}
+.stage .q{color:var(--muted);font-size:13px;margin:2px 0 10px}
+.stage .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.stage .cols h4{font-size:12px;letter-spacing:.08em;color:var(--muted);font-weight:500;margin:0 0 4px}
+.stage ul.k{margin:0;padding-left:1.1em;font-size:14px}
+.stage ul.k li{margin:0 0 2px}
+.stage .out{margin-top:10px;display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font-size:13px}
+.formula{background:var(--accent-soft);border-radius:6px;padding:10px 14px;font-size:14px;margin-top:4px}
+.formula b{color:var(--accent)}
+
+/* 1件の利益 */
+.wf{display:flex;flex-direction:column;gap:4px}
+.wrow{display:grid;grid-template-columns:170px minmax(0,1fr) 84px;gap:12px;align-items:center;font-size:14px}
+.wtrack{position:relative;height:18px}
+.wtrack i{position:absolute;top:0;bottom:0;border-radius:2px;background:var(--line)}
+.wtrack i.sale{background:var(--accent)}
+.wtrack i.cost{background:var(--muted);opacity:.55}
+.wtrack i.gap{background:var(--crit);opacity:.75}
+.wtrack i.profit{background:var(--good)}
+.wrow .v{text-align:right}
+.wrow.total{font-weight:700;border-top:1px solid var(--line);padding-top:6px;margin-top:4px}
+@media (max-width:560px){.wrow{grid-template-columns:118px minmax(0,1fr) 70px;font-size:13px}}
+
+/* カード群 */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:14px 16px;min-width:0}
+.card h3{font-size:15px;margin:0 0 8px}
+.kv{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;font-size:14px}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;text-align:right;font-family:var(--f-num);font-variant-numeric:tabular-nums}
+
+/* てこ */
+table.lever{width:100%;border-collapse:collapse;font-size:14px}
+table.lever th,table.lever td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+table.lever th{font-size:12px;color:var(--muted);font-weight:500;letter-spacing:.06em}
+table.lever td.n{font-family:var(--f-num);text-align:right;white-space:nowrap}
+
+.src{font-size:12px;color:var(--muted);border-top:1px solid var(--line);padding-top:16px}
+.src p{margin:0 0 4px}
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">AI物販 ｜ 12ヶ月目の基準計画を分解</div>
+  <h1>利益KPIツリー</h1>
+  <p class="lead">月の営業利益450万円が、どの数字の掛け算・引き算でできているかを、市場と仕入れ基準の選び方から、リサーチ数・回転・資金・人の作業まで分解しました。各KPIに「計画値」「1日あたり」「今の実測」を並べています。</p>
+  <div class="legend">
+    <span><span class="chip good">順調</span>計画を満たす</span>
+    <span><span class="chip warn">注意</span>未達・未計測</span>
+    <span><span class="chip crit">要対応</span>利益を止めている</span>
+    <span><span class="chip none">未開始</span>仕入れ前のため実績なし</span>
+  </div>
+</header>
+
+<section>
+  <h2>先に見てほしい4点</h2>
+  <p class="sec-note">分解の途中で見つかった、計画の数字の食い違いと、今の詰まりです。</p>
+  <div class="alerts">
+    <div class="alert"><b>eBayの売れた相場が0ジャンル</b><p>監視しているのは37ジャンル。相場がないので、AIの候補は実データでは0件です。ファネルの2段目から先が全部止まっています。</p></div>
+    <div class="alert"><b>ツールの稼働日が7日中4日</b><p>10/31・11/1・11/3はMacがスリープしていて、収集が0件でした。1日中動いた11/4は約3,960件取れています。</p></div>
+    <div class="alert warn"><b>1件の利益に関税と換金コストが入っていない</b><p>計画の19,000円には、米国の関税（約3,900円）と換金スプレッド（約1,200円）が入っていません。ツールの計算には入っているので、1件あたり約5,000円の差が出ます。</p></div>
+    <div class="alert warn"><b>固定費の前提がシートで違う</b><p>シナリオ分析と事業計画書は月120万円、前提条件と12ヶ月計画は月22万円です。どちらを使うかで、営業利益が約100万円/月変わります。</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>1. 利益の分解</h2>
+  <p class="sec-note">上の数字が、下の数字の掛け算・引き算で決まります。右端は12ヶ月目（2027年10月）の基準計画です。</p>
+  <div class="tree-scroll">
+  <ul class="tree">
+    <li><div class="node root"><span class="name">営業利益（月）</span><span class="val">450万円</span><span class="f">＝ 貢献利益の合計 − 固定費 ／ 最低防衛ライン300万円・上振れ606万円</span><span class="act"><span class="chip none">未開始</span></span></div>
+      <ul>
+        <li><div class="node"><span class="name">貢献利益の合計（月）</span><span class="val">570万円</span><span class="f">＝ 販売数 × 1件あたりの貢献利益</span></div>
+          <ul>
+            <li><div class="node"><span class="name">販売数（月）</span><span class="val">300件</span><span class="f">＝ 出品中の在庫 ÷ 在庫日数 × 30 ／ 1日あたり約10件</span><span class="act"><span class="chip none">未開始</span>11月の目標は出品30件以上</span></div>
+              <ul>
+                <li><div class="node"><span class="name">出品中の在庫</span><span class="val">約500件</span><span class="f">＝ 販売数 × 在庫日数 ÷ 30。出品数は月305件（下のファネルの出口）</span></div></li>
+                <li><div class="node"><span class="name">在庫日数（回転）</span><span class="val">50日</span><span class="f">仕入れてから売れるまで。月の回転は約0.6回。下振れ60日・上振れ45日</span></div>
+                  <ul>
+                    <li><div class="node"><span class="name">60日以内に売れる率</span><span class="val">60.5%</span><span class="f">カテゴリ別：ゲーム75%・カメラ60%・音響55%・その他50%。50%未満でそのカテゴリの仕入上限を30%削減</span></div></li>
+                    <li><div class="node"><span class="name">90日を超えた在庫の率</span><span class="val">10%以下</span><span class="f">超えたら値下げ・処分＋仕入上限30%削減</span></div></li>
+                  </ul>
+                </li>
+              </ul>
+            </li>
+            <li><div class="node"><span class="name">1件あたりの貢献利益</span><span class="val">19,000円</span><span class="f">＝ 売価 − 仕入 − 手数料 − 広告 − 送料 − 梱包 − 作業 − 引当（内訳は2章）。うち1,000円は改善目標</span><span class="act"><span class="chip warn">注意</span>関税・換金を入れると約14,000円</span></div>
+              <ul>
+                <li><div class="node"><span class="name">平均売価</span><span class="val">62,000円</span><span class="f">カテゴリ構成の加重平均（カメラ75,000・音響65,000・その他60,000・ゲーム35,000）</span></div></li>
+                <li><div class="node"><span class="name">平均仕入値</span><span class="val">25,000円</span><span class="f">売価の約40%。仕入ROI（貢献利益÷仕入）は76%</span></div></li>
+              </ul>
+            </li>
+          </ul>
+        </li>
+        <li><div class="node"><span class="name">固定費（月）</span><span class="val">120万円</span><span class="f">シナリオ分析の値。前提条件シートは22万円（自宅保管・外注は変動費扱い）</span><span class="act"><span class="chip warn">注意</span>シート間で不一致</span></div></li>
+      </ul>
+    </li>
+  </ul>
+  </div>
+</section>
+
+<section>
+  <h2>2. 1件あたりの利益の内訳</h2>
+  <p class="sec-note">基準計画の売価62,000円から、何がいくら引かれて19,000円が残るか。赤は計画に入っていない費用です（ツールの計算には入っています）。</p>
+  <div class="wf" id="wf"></div>
+</section>
+
+<section>
+  <h2>3. 何を監視するかを決める（上流の工程）</h2>
+  <p class="sec-note">監視の前に、「どの市場で売るか」「どんな基準で仕入れるか」「どの商品なら監視する価値があるか」を決める工程があります。ここで外すと、いくら監視しても利益の出る商品は見つかりません。</p>
+  <div class="flow">
+
+    <div class="stage"><div class="rail"><span class="dot">A</span><span class="stem"></span></div><div class="body">
+      <h3>販売市場を選ぶ</h3><p class="q">どこで、誰に売るか</p>
+      <div class="cols">
+        <div><h4>決めること</h4><ul class="k"><li>販売チャネル（今はeBay US）</li><li>主な買い手の国（米国・英国・豪州・欧州）</li><li>発送の条件（米国はDDPで関税をセラーが負担）</li></ul></div>
+        <div><h4>見るKPI</h4><ul class="k"><li>国別の手数料・送料・関税</li><li>国別の売れた件数と価格</li><li>米国の買い手の割合（今の仮定50%）</li></ul></div>
+      </div>
+      <div class="out"><span class="chip warn">注意</span>eBay US 1本。米国の関税12.5%が1件あたり約3,900円効くので、米国以外の比率が利益を左右します</div>
+    </div></div>
+
+    <div class="stage"><div class="rail"><span class="dot">B</span><span class="stem"></span></div><div class="body">
+      <h3>仕入れ基準を決める</h3><p class="q">どんな商品なら買ってよいか</p>
+      <div class="cols">
+        <div><h4>今の基準</h4><ul class="k"><li>貢献利益 8,000円以上（カテゴリ別の下限が優先）</li><li>仕入ROI 30%以上</li><li>仕入れ1件 15万円まで</li><li>eBayで直近に3件以上売れている</li><li>相場の2割未満の出品は別物として除外</li></ul></div>
+        <div><h4>計画の基準（カテゴリ別）</h4><ul class="k"><li>貢献利益の下限：ゲーム8,000・カメラ18,000・音響15,000・その他14,000円</li><li>60日以内に売れる率 50〜75%</li><li>返品率の上限 4〜6%</li><li>1カテゴリ40%・1型番5%まで</li></ul></div>
+      </div>
+      <div class="out"><span class="chip warn">注意</span>ツールの一律8,000円と、計画のカメラ18,000円がずれています。どちらを正とするか決めると、候補の数が大きく変わります</div>
+    </div></div>
+
+    <div class="stage"><div class="rail"><span class="dot">C</span><span class="stem"></span></div><div class="body">
+      <h3>セグメントを絞る</h3><p class="q">メルカリのどのカテゴリを狙うか</p>
+      <div class="cols">
+        <div><h4>流れ</h4><ul class="k"><li>メルカリ全22大カテゴリ・約300中カテゴリ</li><li>→ 輸出に向く ◎/○：約14中カテゴリ</li><li>→ 今カバーしているもの：5中カテゴリ</li></ul></div>
+        <div><h4>判定の基準</h4><ul class="k"><li>海外の需要（eBayで売れている数）</li><li>規制・輸送（食品・コスメ・電池・刃物は×）</li><li>単価と送料（重い・安いは×）</li><li>真贋・検品の難しさ</li></ul></div>
+      </div>
+      <div class="out"><span class="chip warn">注意</span>トレカ・フィギュア・釣り・ゴルフ・レコードなど、◎/○の約9中カテゴリが未カバー。すべて仮説の段階</div>
+    </div></div>
+
+    <div class="stage"><div class="rail"><span class="dot">D</span><span class="stem"></span></div><div class="body">
+      <h3>監視する価値があるか判定する</h3><p class="q">ジャンル・型番ごとに、利益の出る商品が流れてくるか</p>
+      <div class="cols">
+        <div><h4>見るKPI</h4><ul class="k"><li>eBayの売れた件数（需要）と出品中の件数（競合）</li><li>eBayの相場とメルカリの相場の差（価格差）</li><li>想定される1件の利益</li><li>メルカリの新着の数/日（供給）</li><li>回転（売れるまでの日数）</li></ul></div>
+        <div><h4>今の状況</h4><ul class="k"><li>監視中 37ジャンル（当たりジャンルDBの仮説から選定）</li><li>eBayの出品中データあり：37ジャンル</li><li>eBayの売れた相場あり：0ジャンル</li><li>暫定判定（出品中の価格×85%）で価値あり：12ジャンル、ゼロ：25ジャンル</li></ul></div>
+      </div>
+      <div class="formula"><b>ジャンルの監視価値（1日あたりの期待利益）</b> ＝ メルカリの新着/日 × 基準を満たす出品の割合 × 1件の利益 × 購入成功率</div>
+      <div class="out"><span class="chip warn">暫定</span>出品中の価格で仮判定済み（11/6）。上位はCONTAX・RICOH GR・ゲームボーイカラー・Mamiya・OLYMPUS PEN。ゲーム本体・ソフトとFD・タクマー等のレンズは、甘めの相場でも基準を満たす出品がゼロ。売れた相場での本判定は未実施</div>
+    </div></div>
+
+    <div class="stage"><div class="rail"><span class="dot">E</span><span class="stem"></span></div><div class="body">
+      <h3>監視ワードを設定する</h3><p class="q">メルカリとeBayで、同じ商品を拾える検索語にする</p>
+      <div class="cols">
+        <div><h4>決めること</h4><ul class="k"><li>メルカリの検索語（広さ）と除外語</li><li>eBayの検索語・カテゴリID</li><li>状態・価格の条件</li></ul></div>
+        <div><h4>見るKPI</h4><ul class="k"><li>1ページあたりの新着の数</li><li>関係のない出品の割合（除外率）</li><li>照合できた割合（相場が引き当たった率）</li></ul></div>
+      </div>
+      <div class="out"><span class="chip good">順調</span>流入は約3,800件/日。<span class="chip warn">注意</span>除外率・照合できた割合は未計測</div>
+    </div></div>
+
+  </div>
+  <p class="sec-note" style="margin-top:4px">E の監視ワードが、次の章のファネルの入口（監視する商品）になります。D で監視価値が低いと判定したジャンルは外し、空いた枠で C の未カバーのセグメントを試す、という入れ替えを月1回まわすのが基本の動きです。</p>
+</section>
+
+<section>
+  <h2>4. 監視から販売までのファネル</h2>
+  <p class="sec-note">3章で決めた監視ワードから、月300件売るまで。1日にどれだけ監視し、何件を人が確認する必要があるか。バーは計画の月間件数（対数目盛）、右は1日あたりと今の実測です。</p>
+  <div class="funnel" id="funnel"></div>
+  <div class="grid" style="margin-top:16px">
+    <div class="card"><h3>監視数を決める要素</h3>
+      <dl class="kv">
+        <dt>監視ジャンル数</dt><dd>37</dd>
+        <dt>メルカリの取得ページ数/日</dt><dd>約120（1時間に5ページ）</dd>
+        <dt>1ページの件数</dt><dd>90〜100件</dd>
+        <dt>新着の流入（全ジャンル合計）</dt><dd>約3,800件/日</dd>
+        <dt>ツールの稼働率（直近7日）</dt><dd>4/7日</dd>
+      </dl>
+      <p class="sec-note" style="margin:8px 0 0">監視数 ＝ 新着の流入 × 稼働率。今は流入が十分あり、稼働率が上限になっています。</p>
+    </div>
+    <div class="card"><h3>候補の質を決める要素</h3>
+      <dl class="kv">
+        <dt>eBayの売れた相場があるジャンル</dt><dd>0 / 37</dd>
+        <dt>相場の有効期間（手動取り込み）</dt><dd>7日</dd>
+        <dt>照合の一致スコアの下限</dt><dd>0.55</dd>
+        <dt>候補の基準</dt><dd>利益8,000円・ROI 30%</dd>
+        <dt>AIの候補になる率（計画）</dt><dd>監視の5%</dd>
+      </dl>
+      <p class="sec-note" style="margin:8px 0 0">AIの候補 ＝ 監視数 × 相場のあるジャンルの割合 × 基準を満たす率。相場が0なので、今は0件です。</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>5. 在庫・回転・資金</h2>
+  <p class="sec-note">回転が遅いほど、同じ販売数でも寝かせるお金が増えます。</p>
+  <div class="grid">
+    <div class="card"><h3>在庫に寝るお金</h3>
+      <dl class="kv">
+        <dt>月末の在庫原価</dt><dd>1,250万円</dd>
+        <dt>計算</dt><dd>300件×25,000円×50日÷30</dd>
+        <dt>月の仕入額</dt><dd>約790万円</dd>
+        <dt>未入金（売上の10%）</dt><dd>約186万円</dd>
+      </dl>
+    </div>
+    <div class="card"><h3>資金の枠</h3>
+      <dl class="kv">
+        <dt>使える資金（基準）</dt><dd>2,100万円</dd>
+        <dt>内訳</dt><dd>自己資金300＋融資500＋追加1,300</dd>
+        <dt>最低限残す現金</dt><dd>300万円</dd>
+        <dt>税金の準備</dt><dd>営業利益の30%</dd>
+      </dl>
+    </div>
+    <div class="card"><h3>回転のてこ</h3>
+      <dl class="kv">
+        <dt>在庫日数 −10日</dt><dd>在庫 −250万円</dd>
+        <dt>在庫日数 +10日</dt><dd>在庫 +250万円</dd>
+        <dt>仕入単価 +1,000円</dt><dd>在庫 +50万円</dd>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>6. 人の作業</h2>
+  <p class="sec-note">物理作業はAIでは減りません。月300件で約283時間（1.8人分）。オーナーは月85時間まで、超えた分は外注です。</p>
+  <div class="grid">
+    <div class="card"><h3>工程ごとの時間（月300件）</h3>
+      <dl class="kv" id="labor"></dl>
+    </div>
+    <div class="card"><h3>1日あたりに直すと</h3>
+      <dl class="kv">
+        <dt>人が確認する候補</dt><dd>約33件</dd>
+        <dt>仕入れの最終承認</dt><dd>約14件（3分/件）</dd>
+        <dt>検品・撮影</dt><dd>約10件（28分/件）</dd>
+        <dt>梱包・発送</dt><dd>約10件（8分/件）</dd>
+        <dt>オーナーの上限</dt><dd>月85〜100時間</dd>
+        <dt>外注の目安（12ヶ月目）</dt><dd>月198時間・約36万円</dd>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>7. 品質の歯止め</h2>
+  <p class="sec-note">利益の前提を崩す数字です。超えたら自動で仕入れを止めたり減らしたりします。</p>
+  <div class="grid">
+    <div class="card"><h3>ルールで止める</h3>
+      <dl class="kv">
+        <dt>予測利益の誤差</dt><dd>20%超で拡大停止</dd>
+        <dt>返品率</dt><dd>7%超でカテゴリ停止</dd>
+        <dt>誤仕入れ率</dt><dd>2%超で自動購入停止</dd>
+        <dt>自由現金</dt><dd>300万円未満で縮小</dd>
+        <dt>90日超の在庫率</dt><dd>10%超で30%削減</dd>
+      </dl>
+    </div>
+    <div class="card"><h3>集中の上限</h3>
+      <dl class="kv">
+        <dt>1カテゴリ</dt><dd>在庫原価の40%以下</dd>
+        <dt>1型番</dt><dd>在庫原価の5%以下</dd>
+        <dt>未検証カテゴリ</dt><dd>仕入額の15%以下</dd>
+        <dt>検品合格率</dt><dd>96〜97%</dd>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>8. 利益がいちばん動くてこ</h2>
+  <p class="sec-note">12ヶ月目の基準（300件・19,000円・固定費120万円）から1つだけ動かしたときの、営業利益の変化です。</p>
+  <table class="lever">
+    <thead><tr><th>動かすKPI</th><th>変化</th><th style="text-align:right">営業利益/月</th></tr></thead>
+    <tbody>
+      <tr><td>販売数</td><td>+10件</td><td class="n">+19万円</td></tr>
+      <tr><td>1件あたりの貢献利益</td><td>+1,000円</td><td class="n">+30万円</td></tr>
+      <tr><td>平均売価（手数料などは比例）</td><td>+1,000円</td><td class="n">約+21万円</td></tr>
+      <tr><td>平均仕入値</td><td>−1,000円</td><td class="n">+30万円</td></tr>
+      <tr><td>米国関税・換金を計上</td><td>約−5,000円/件</td><td class="n">約−150万円</td></tr>
+      <tr><td>固定費</td><td>−10万円</td><td class="n">+10万円</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<footer class="src">
+  <p>出典：事業計画マスター（前提条件・12ヶ月計画・ユニットエコノミクス・シナリオ分析・仕入れファネル・カテゴリ別採算・作業工数・ステージゲート、2026-10-30時点）。</p>
+  <p>今の実測：物販ツールのDB（2026-11-05時点）。新着の流入は直近3日の推計で、ジャンル間の重複を含みます。関税は「米国の買い手50%×関税12.5%」、換金は2%で、ツールの設定値です。</p>
+</footer>
+</div>
+
+<script>
+// 2章：1件あたりの利益（基準計画）
+(function(){
+  const sale=62000;
+  const rows=[
+    ["売価",sale,"sale",0],
+    ["仕入",25000,"cost"],["eBay・決済・国際手数料",9300,"cost"],["国際送料",5500,"cost"],
+    ["作業（検品・撮影・発送）",1500,"cost"],["広告",1200,"cost"],["返品・値下げ・為替の引当",1000,"cost"],["梱包資材",500,"cost"],
+    ["改善目標（仕入交渉など）",-1000,"cost"],
+    ["米国関税（計画に未計上）",3875,"gap"],["換金スプレッド（計画に未計上）",1240,"gap"]
+  ];
+  const el=document.getElementById("wf"); let left=sale; const fmt=n=>n.toLocaleString("ja-JP");
+  const pct=v=>(v/sale*100).toFixed(2)+"%";
+  rows.forEach(([name,v,kind])=>{
+    let a,w;
+    if(kind==="sale"){a=0;w=sale}else{ if(v<0){a=left;w=-v;left+= -v}else{left-=v;a=left;w=v} }
+    const sign=kind==="sale"?"":(v<0?"+":"−");
+    el.insertAdjacentHTML("beforeend",`<div class="wrow"><span>${name}</span><span class="wtrack"><i class="${kind}" style="left:${pct(a)};width:${pct(w)}"></i></span><span class="v num">${sign}${fmt(Math.abs(v))}</span></div>`);
+    if(name.startsWith("改善目標")){
+      el.insertAdjacentHTML("beforeend",`<div class="wrow total"><span>計画の貢献利益</span><span class="wtrack"><i class="profit" style="left:0;width:${pct(left)}"></i></span><span class="v num">${fmt(left)}</span></div>`);
+    }
+  });
+  el.insertAdjacentHTML("beforeend",`<div class="wrow total"><span>関税・換金を入れた場合</span><span class="wtrack"><i class="profit" style="left:0;width:${pct(left)}"></i></span><span class="v num">${fmt(left)}</span></div>`);
+})();
+
+// 3章：ファネル
+(function(){
+  const steps=[
+    ["監視する商品","重複なし",60000,"",["warn","約3,960/日（稼働日のみ）"]],
+    ["AIの候補","期待利益・照合・回転",3000,"5%",["crit","0件（相場なし）"]],
+    ["人が確認","上位スコアのみ",1000,"33%",["none","未開始"]],
+    ["購入を判断","価格・状態・出品者",430,"43%",["none","未開始"]],
+    ["購入成功","決済完了",320,"74%",["none","未開始"]],
+    ["検品合格","出品できる品質",310,"97%",["none","未開始"]],
+    ["出品","写真・説明・登録",305,"98%",["none","未開始"]],
+    ["販売","取引完了",300,"98%",["none","未開始"]]
+  ];
+  const el=document.getElementById("funnel"); const max=Math.log10(60000), min=Math.log10(100);
+  el.insertAdjacentHTML("beforeend",`<div class="frow head"><span>工程</span><span>計画（月）</span><span style="text-align:right">1日あたり</span><span>今の実測</span></div>`);
+  steps.forEach(([n,sub,v,conv,[st,now]],i)=>{
+    if(i>0) el.insertAdjacentHTML("beforeend",`<div class="conv">↓ ${conv}</div>`);
+    const w=((Math.log10(v)-min)/(max-min)*100).toFixed(1);
+    const perDay=v/30; const pd=perDay>=100?Math.round(perDay).toLocaleString("ja-JP"):perDay.toFixed(0);
+    el.insertAdjacentHTML("beforeend",`<div class="frow"><span class="label">${n}<small>${sub}</small></span><span class="bar"><i style="width:${w}%"></i><em>${v.toLocaleString("ja-JP")}</em></span><span class="per num">${pd}</span><span class="now"><span class="chip ${st}">${now}</span></span></div>`);
+  });
+})();
+
+// 5章：作業時間
+(function(){
+  const rows=[["検品・清掃",103],["撮影",41],["梱包・発送",40],["仕入れの最終承認",22],["CS・返品の一次対応",20],["入庫・採番",16],["出品の確認",15],["例外処理・品質管理",15],["棚入れ",10]];
+  document.getElementById("labor").innerHTML=rows.map(([k,h])=>`<dt>${k}</dt><dd>${h}時間</dd>`).join("")+`<dt><b>合計</b></dt><dd><b>283時間</b></dd>`;
+})();
+</script>
