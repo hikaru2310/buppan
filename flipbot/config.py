@@ -226,6 +226,9 @@ class AiTasks(BaseModel):
     drive_folder_id: Optional[str] = None
     # 終わったら成果物をDriveに置き、計画シート「タスク管理」のAI成果物列にリンクを書く
     publish: bool = True
+    # 毎月この日以降に1回、翌月の見込みと利益率の改善案をAIで自動作成（12か月目の目標水準に届くまで続ける）
+    auto_forecast: bool = True
+    auto_forecast_day: int = 20
 
 
 class Config(BaseModel):

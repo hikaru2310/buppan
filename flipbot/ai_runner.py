@@ -78,7 +78,8 @@ PUBLISH_PROMPT = """次の手順だけを行ってください。ほかの操作
    - parentId: {folder}
    - contentMimeType: text/markdown（失敗したら text/plain）
    - textContent: 読んだ内容そのまま
-3. Google Sheets の get_values で、スプレッドシート {sheet} の範囲 'タスク管理'!A1:A500 を読み、A列が {task_id} の行番号を探す
+3. Google Sheets の get_values で、スプレッドシート {sheet} の範囲 'タスク管理'!A1:A500 を読み、A列が {task_id} の行番号を探す。
+   見つからなければ 4 は行わない
 4. update_values で、その行の T列だけ（'タスク管理'!T<行番号>）に次の式を書く。ほかのセルは絶対に変えない
    =HYPERLINK("<作ったドキュメントのURL>","{label}")
 5. 最後の行に、作ったドキュメントのURLだけを出力する
@@ -126,6 +127,25 @@ def build_prompt(task: dict[str, Any]) -> str:
 def command(prompt: str, exe: str) -> list[str]:
     return [exe, "-p", prompt, "--output-format", "json", "--permission-mode", "acceptEdits",
             "--allowedTools", *ALLOWED_TOOLS, "--disallowedTools", *DISALLOWED_TOOLS]
+
+
+FORECAST_TASK = {
+    "実行区分": "AI",
+    "成果物・完了条件": "翌月（{next}）の見込み（仕入れファネル・販売数・貢献利益/件・営業利益・必要資金）と、12か月目（{final}）の目標との差、"
+                       "その差を埋めるための利益率の改善案（カテゴリ配分・価格・費用・転換率）を、数値の根拠つきでまとめる",
+    "KPI": "翌月見込みと12か月目目標の差、利益率",
+    "AIの担当範囲・人の作業": "AI: 実績（data/flips.db）と計画シートのキャッシュ（data/plan_cache.json）から見込みと改善案を作成／人: 採用する改善案と翌月の仕入上限を決める",
+    "備考": "当月の目標を達成していても毎月作る。計画シートの数値は書き換えない。改善案は効果の大きい順に、試し方と止める条件も書く",
+}
+
+
+def forecast_task(month_key: str, next_label: str, final_label: str) -> dict[str, Any]:
+    t = {k: v.format(next=next_label, final=final_label) for k, v in FORECAST_TASK.items()}
+    return {**t, "ID": f"AUTO-{month_key}", "タスク": f"翌月（{next_label}）の見込みと利益率の改善案", "期限": "—", "ステータス": "未着手"}
+
+
+def has_run(task_id: str) -> bool:
+    return any(r["task_id"] == task_id and r["status"] in ("running", "done") for r in _load())
 
 
 def _cfg():

@@ -167,16 +167,28 @@ const DECISION_MAP={
 };
 
 // ---------- KPI・ファネル
+function forecastCard(){
+  const runs=(S.ai?.runs||[]).filter(r=>(r.task_id||"").startsWith("AUTO-")), last=runs[0], busy=(S.ai?.runs||[]).some(r=>r.status==="running");
+  const st=!last?"まだ作成していません":last.status==="running"?`作成中（${hm(last.started_at)} 開始）`
+    :`${last.status==="done"?"作成済み":"失敗"} ${hm(last.finished_at)}${last.doc_url?`・<a href="${esc(last.doc_url)}" target="_blank">Googleドキュメント</a>`:""}・<a href="#tasks" data-goto-run="${esc(last.id)}">報告</a>`;
+  return `<div class="card" style="padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:220px"><b>翌月の見込みと利益率の改善案（AI）</b>
+    <div class="mini">毎月${S.settings?.forecast_day||20}日以降に自動で作成し、Googleドライブに保存します。当月の目標を達成していても、12か月目の目標水準に届くまで毎月続けます${S.ops.final_reached?"（到達済みのため自動作成は停止中）":""}。<br>前回：${st}</div></div>
+    ${S.ai?.available?`<button class="btn sm dark" id="fcNow" ${busy?"disabled":""}>${busy?"AIが実行中":"今すぐ作成"}</button>`:""}</div>`;
+}
 VIEWS.kpi=["上流 / KPI・ファネル",()=>{
-  const months=S.plan.monthly||[], act=S.ops.months||[], kp=S.plan.kpi_plan||[], f=S.ops.funnel||[], ind=S.ops.indicators||{};
+  const months=S.plan.monthly||[], act=S.ops.months||[], kp=S.plan.kpi_plan||[], f=S.ops.funnel||[], ind=S.ops.indicators||{}, fl=S.ops.funnel_labels||{};
   const row=i=>act.find(a=>a.month===i);
   return h1("計画と実績の差を、毎週シートに戻す。","実績はツールが自動で集計します。下のボタンで、シートの「KPI実績」「仕入れファネル」にそのまま貼り付けられる形でコピーできます（運用ルール：毎週更新）。")
   + planBanner()
-  + h2("· 01","仕入れファネル（当月）","計画は12か月目の基準値を当月の販売計画で按分。経過按分＝月の経過割合ぶんの目安")
-  + `<div class="card"><div class="wide"><table><thead><tr><th>工程</th><th class="num">当月目標</th><th class="num">経過按分</th><th class="num">実績</th><th>進捗</th><th class="num">転換率 計画</th><th class="num">転換率 実績</th><th>定義</th></tr></thead><tbody>
-    ${f.map(x=>`<tr><td><b>${esc(x.stage)}</b></td><td class="num">${x.target_month??"—"}</td><td class="num">${x.target_to_date??"—"}</td><td class="num"><b>${x.actual??"—"}</b></td>
-      <td style="min-width:120px">${bar(x.actual,x.target_to_date||1,num(x.actual)&&x.target_to_date&&x.actual>=x.target_to_date?"ok":"bad")}</td>
-      <td class="num">${num(x.conv_plan)?pct(x.conv_plan,1):"—"}</td><td class="num">${pct(x.conv_actual,1)}</td><td class="wrap mini">${esc(x.note||"")}</td></tr>`).join("")}
+  + h2("· 01","仕入れファネル（当月）","計画は12か月目の基準値を当月の販売計画で按分。経過按分＝月の経過割合ぶんの目安。当月目標を超えたら、進捗は12か月目の目標に対して表示")
+  + forecastCard()
+  + `<div class="card"><div class="wide"><table><thead><tr><th>工程</th><th class="num">当月目標</th><th class="num">経過按分</th><th class="num">実績</th><th class="num">月末見込み</th><th class="num">翌月目標<div class="meta">${esc(fl.next||"")}</div></th><th class="num">12か月目目標<div class="meta">${esc(fl.final||"")}</div></th><th>進捗</th><th class="num">転換率 計画</th><th class="num">転換率 実績</th><th>定義</th></tr></thead><tbody>
+    ${f.map(x=>{const over=num(x.actual)&&x.target_month&&x.actual>=x.target_month;
+      return `<tr><td><b>${esc(x.stage)}</b></td><td class="num">${x.target_month??"—"}</td><td class="num">${x.target_to_date??"—"}</td><td class="num"><b>${x.actual??"—"}</b></td>
+      <td class="num">${x.forecast_month??"—"}</td><td class="num">${x.target_next??"—"}</td><td class="num">${x.target_final??"—"}</td>
+      <td style="min-width:140px">${over?`${bar(x.actual,x.target_final||1,x.actual>=(x.target_final||1e9)?"ok":"")}<div class="mini">当月達成・12か月目比 ${x.target_final?Math.round(x.actual/x.target_final*100):"—"}%</div>`
+        :bar(x.actual,x.target_to_date||1,num(x.actual)&&x.target_to_date&&x.actual>=x.target_to_date?"ok":"bad")}</td>
+      <td class="num">${num(x.conv_plan)?pct(x.conv_plan,1):"—"}</td><td class="num">${pct(x.conv_actual,1)}</td><td class="wrap mini">${esc(x.note||"")}</td></tr>`}).join("")}
     </tbody></table></div><div class="foot"><span class="meta">取得商品データ＝初めて見たメルカリ出品数 / AI一次候補＝基準を満たした候補（実データのみ）/ 人間確認＝キュー追加＋見送り</span><button class="btn" id="copyFunnel">実績列をコピー</button></div></div>`
   + h2("· 02","品質・在庫の指標",`シート「KPI実績」の右側の列`)
   + `<div class="kpis">
@@ -201,6 +213,8 @@ VIEWS.kpi=["上流 / KPI・ファネル",()=>{
 },()=>{
   const cp=async(t,msg)=>{try{await navigator.clipboard.writeText(t);toast(msg)}catch(e){prompt("コピーできなかったので、ここから手動でコピーしてください",t)}};
   const k=$("#copyKpi"); if(k) k.onclick=async()=>{const t=await (await fetch("/api/kpi.tsv?month="+$("#kpiMonth").value)).text();cp(t,"コピーしました。シート「KPI実績」の該当月のA列に貼り付けてください")};
+  const fc=$("#fcNow"); if(fc) fc.onclick=async()=>{if(!confirm("翌月の見込みと利益率の改善案をAIで作成します（数分〜十数分）。実行しますか？"))return; fc.disabled=true; const r=await (await post("/api/ai-forecast",{})).json(); if(r.ok) toast(r.message); else alert(r.message); load()};
+  $$("[data-goto-run]").forEach(a=>a.onclick=e=>{e.preventDefault(); openRun=a.dataset.gotoRun; go("tasks"); const d=document.getElementById("run-"+openRun); if(d) d.scrollIntoView({block:"start"})});
   const fb=$("#copyFunnel"); if(fb) fb.onclick=()=>cp((S.ops.funnel||[]).map(x=>x.actual??"").join("\n"),"コピーしました。シート「仕入れファネル」の実績列（D列）の先頭に貼り付けてください");
   const mm=$("#maMonth"); if(mm) mm.onchange=()=>{localSet("maMonth",mm.value);render()};
   const ms=$("#maSave"); if(ms) ms.onclick=async()=>{const o={month:$("#maMonth").value};$$("#maForm [name]").forEach(i=>o[i.name]=i.value);const r=await (await post("/api/month-actual",o)).json();toast(r.message);load()};

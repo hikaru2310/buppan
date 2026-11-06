@@ -24,6 +24,7 @@ GET  /api/listing-draft?sku= 英語の出品下書き
 POST /api/ebay-page       普段のChromeから送られた eBay「売れた商品」ページを相場として取り込み {"html","url","target_id"?}
 POST /api/ai-task        計画タスクをAI（Claude Code）で実行 {"id": "P01"}
 POST /api/ai-publish     AIの成果物をGoogleドライブに保存し直す {"run_id": ...}
+POST /api/ai-forecast    翌月の見込みと利益率の改善案を今すぐAIで作る（毎月20日以降は自動）
 GET  /login?t=          iPhone等からの初回ログイン（合言葉をCookieに保存）
 GET  /api/phone-qr.svg?net=lan|ts  iPhoneで開くためのQRコード（このMacからだけ。ts = Tailscale経由・外出先用）
 POST /api/settings        画面入力の設定値（現金残高など）{"cash_jpy": ...}
@@ -309,6 +310,7 @@ class AppState:
                 "mercari_inflow_per_day": inflow_per_day,
                 "scan_mode": cfg.app.scan_mode,
                 "ebay_fetch": cfg.app.ebay_fetch,
+                "forecast_day": cfg.ai_tasks.auto_forecast_day,
                 "ebay_api": {"configured": bool(cfg.ebay_api.client_id and cfg.ebay_api.client_secret),
                              "use_browse": cfg.ebay_api.use_browse, "use_insights": cfg.ebay_api.use_insights,
                              "active_as_market": cfg.ebay_api.active_as_market},
@@ -734,6 +736,8 @@ def _make_handler(state: AppState):
                 tasks = plan_mod.load(state.cfg, force=True).get("tasks") or []
                 task = next((t for t in tasks if t.get("ID") == body.get("id")), None)
                 self._json(ai_runner.start(task) if task else {"ok": False, "message": "シートにそのIDのタスクがありません"})
+            elif path == "/api/ai-forecast":
+                self._json(auto_forecast(state, force=True))
             elif path == "/api/ai-publish":
                 self._json(ai_runner.publish_again(str(body.get("run_id", ""))))
             elif path == "/api/ebay-api-test":
@@ -799,6 +803,31 @@ def _daily_tasks(state: "AppState") -> None:
             con.close()
     except Exception:  # noqa: BLE001
         pass
+    try:
+        auto_forecast(state)
+    except Exception as e:  # noqa: BLE001
+        state.last_error = f"翌月見込みの自動作成に失敗しました: {e!r}"
+
+
+def auto_forecast(state: "AppState", *, force: bool = False) -> dict[str, Any]:
+    """毎月（既定は20日以降に1回）、AIに翌月の見込みと利益率の改善案を作らせる。
+    当月の目標を達成していても続け、締まった月で12か月目の販売数・営業利益に届いたら止める。"""
+    from datetime import date
+
+    cfg = state.cfg
+    if not force and not (cfg.ai_tasks.auto_forecast and date.today().day >= cfg.ai_tasks.auto_forecast_day):
+        return {"ok": False, "message": "まだ作成日ではありません"}
+    snap = state.snapshot()
+    ops_ = snap.get("ops") or {}
+    if ops_.get("final_reached") and not force:
+        return {"ok": False, "message": "12か月目の目標水準に到達したため、自動作成は止まっています"}
+    idx = ops_.get("month_index") or plan_mod.month_index(cfg)
+    key = date.today().strftime("%Y%m")
+    if not force and ai_runner.has_run(f"AUTO-{key}"):
+        return {"ok": False, "message": "今月の見込みは作成済みです"}
+    labels = ops_.get("funnel_labels") or {}
+    task = ai_runner.forecast_task(key, labels.get("next") or plan_mod.month_label(cfg, idx + 1), labels.get("final") or "12か月目")
+    return ai_runner.start(task)
 
 
 def _auto_scan_loop(state: "AppState", interval: int) -> None:

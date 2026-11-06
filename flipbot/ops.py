@@ -414,6 +414,8 @@ def metrics(con: sqlite3.Connection, cfg: Config, plan: dict[str, Any]) -> dict[
         "risks": risks,
         "gates": _gates(plan, months, indicators),
         "funnel": _funnel(con, cfg, plan, cur),
+        "funnel_labels": {"next": month_label(cfg, cur + 1), "final": month_label(cfg, _final_month(plan))},
+        "final_reached": final_reached(plan, months, idx),
         "cash_jpy": cash,
     }
 
@@ -511,6 +513,21 @@ def _month_actual(con, cfg: Config, idx: int, skus: list[dict[str, Any]], fx: fl
     }
 
 
+def _final_month(plan: dict[str, Any]) -> int:
+    return max((int(m.get("月", 0) or 0) for m in plan.get("monthly", [])), default=12) or 12
+
+
+def final_reached(plan: dict[str, Any], months: list[dict[str, Any]], idx: int) -> bool:
+    """締まった月のどれかで、12か月目（年末）の販売数と営業利益の計画に届いたか。"""
+    m = next((x for x in plan.get("monthly", []) if int(x.get("月", 0) or 0) == _final_month(plan)), None)
+    if not m:
+        return False
+    sales, op = _num(m.get("販売数")), _num(m.get("営業利益(万円)"))
+    closed = [x for i, x in enumerate(months, start=1) if i < idx]  # 締まった月だけ
+    return any((x.get("sales") or 0) >= (sales or 1e9) and (x.get("op_profit_man") or -1e9) >= (op or 1e9)
+               for x in closed)
+
+
 def _funnel(con, cfg: Config, plan: dict[str, Any], idx: int) -> list[dict[str, Any]]:
     start, end = _month_bounds(cfg, idx)
     one = lambda sql, *a: con.execute(sql, (start, end, *a)).fetchone()[0]  # noqa: E731
@@ -529,9 +546,14 @@ def _funnel(con, cfg: Config, plan: dict[str, Any], idx: int) -> list[dict[str, 
     }
     progress = _month_progress(cfg, idx)
     # 計画は12か月目の基準値。当月の目標は 販売数比で按分する
-    m = next((m for m in plan.get("monthly", []) if int(m.get("月", 0)) == idx), None)
     final_sales = next((f.get("月間目標件数") for f in plan.get("funnel", []) if f.get("工程") == "月間販売"), None)
-    scale = (float(m["販売数"]) / float(final_sales)) if m and final_sales else 1.0
+
+    def scale_of(i: int) -> Optional[float]:
+        mm = next((m for m in plan.get("monthly", []) if int(m.get("月", 0)) == i), None)
+        return (float(mm["販売数"]) / float(final_sales)) if mm and final_sales else None
+
+    scale = scale_of(idx) or 1.0
+    scale_next, scale_final = scale_of(idx + 1), scale_of(_final_month(plan))
     out = []
     prev = None
     for f in plan.get("funnel", []) or [{"工程": k} for k in actual]:
@@ -544,6 +566,10 @@ def _funnel(con, cfg: Config, plan: dict[str, Any], idx: int) -> list[dict[str, 
             "target_month": round(month_target) if month_target else None,
             "target_to_date": round(month_target * progress) if month_target else None,
             "actual": a,
+            # 今のペースが続いた場合の月末の見込み
+            "forecast_month": round(a / progress) if a is not None and progress else None,
+            "target_next": round(target * scale_next) if target and scale_next else None,
+            "target_final": round(target * scale_final) if target and scale_final else None,
             "conv_plan": f.get("前工程からの転換率"),
             "conv_actual": (a / prev) if (a is not None and prev) else None,
             "note": f.get("定義・管理ポイント"),

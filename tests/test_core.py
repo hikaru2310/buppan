@@ -381,6 +381,21 @@ def test_ai_runner_start_and_finish():
     assert run["publish"] == "done" and run["doc_url"] == "https://docs.google.com/document/d/abc_123/edit"
 
 
+def test_forecast_until_final_target():
+    """翌月見込み: 当月を達成しても続け、締まった月で12か月目の販売数・営業利益に届いたら止める。"""
+    from flipbot import ai_runner
+    from flipbot.ops import final_reached
+
+    plan = {"monthly": [{"月": 1, "販売数": 15, "営業利益(万円)": 6.5}, {"月": 12, "販売数": 300, "営業利益(万円)": 548}]}
+    hit = {"sales": 310, "op_profit_man": 560}
+    assert not final_reached(plan, [{"sales": 20, "op_profit_man": 10}], 2)  # 1か月目の目標達成だけでは止めない
+    assert not final_reached(plan, [hit], 1)  # 当月（締まっていない）は数えない
+    assert final_reached(plan, [hit, {}], 2)
+    t = ai_runner.forecast_task("202611", "2026/12", "2027/10")
+    assert t["ID"] == "AUTO-202611" and "2026/12" in t["タスク"] and "2027/10" in t["成果物・完了条件"]
+    assert ai_runner.can_run(t) is None
+
+
 def main() -> int:
     tests = [v for k, v in globals().items() if k.startswith("test_")]
     ng = 0
