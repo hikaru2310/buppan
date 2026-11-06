@@ -151,6 +151,18 @@ python -m flipbot.run login
 
 ## 精度を上げるには
 
+### 仕入れ候補の件数を診断する・増やす
+
+```bash
+.venv/bin/python -m flipbot.run diagnose --goal 50
+```
+
+保存済みのデータだけで候補を数え直し（サイトにはアクセスしません・基準は今のまま）、ジャンル別にどこで落ちているか、eBayの売れた相場がないジャンル、照合で取りこぼしていそうな出品を表示します。
+
+`improve-candidates.command` をダブルクリックすると、Claude Code がこの診断を使って、基準を変えずに照合の取りこぼし（日英の語の対応・表記ゆれ）を直し、目標件数（既定50件）になるか、増えなくなるまで繰り返します。手順と禁止事項は [docs/candidate-improvement-loop.md](docs/candidate-improvement-loop.md)。変更は commit されないので、内容を確認してからGitHubに上げてください。
+
+売れた相場を取り込んでいないジャンルでも、同じカテゴリの別ジャンルで取り込んだ売れた相場があれば、照合（型番・焦点距離・F値など）で一致した成約が3件以上ある出品は候補になります（例：「ニコン Ai レンズ（日本語表記）」に「Nikon Ai / Ai-s レンズ」の相場を使う）。
+
 - 取りこぼし（相場なし）が多い → `normalize.py` の `PHRASES` に日英の対応語を追加
 - 誤マッチが多い → `thresholds.match_threshold` を上げる / `min_comps` を増やす
 - ジャンルで出品の質を絞る → `genres[].include_keywords` / `exclude_keywords`

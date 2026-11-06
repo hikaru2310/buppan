@@ -45,6 +45,12 @@ def build_parser() -> argparse.ArgumentParser:
     val.add_argument("--days", type=float, default=3, help="何日分の取得結果で計算するか")
     val.add_argument("--csv", default=None, help="結果をCSVにも保存するパス")
 
+    dg = sub.add_parser("diagnose", help="仕入れ候補の件数と、どこで落ちているかを診断（DBを読むだけ。サイトにはアクセスしない）")
+    dg.add_argument("--config", default="./config.yaml")
+    dg.add_argument("--days", type=float, default=3, help="何日分の取得結果で数えるか")
+    dg.add_argument("--goal", type=int, default=50, help="目標の候補件数")
+    dg.add_argument("--json", default=None, help="結果をJSONにも保存するパス")
+
     doc = sub.add_parser("doctor", help="設定・Chromeプロファイルロック等を診断")
     doc.add_argument("--config", default="./config.yaml")
     return p
@@ -108,12 +114,58 @@ def run_value(cfg_path: str, *, days: float, csv_path: Optional[str]) -> int:
     return 0
 
 
+def run_diagnose(cfg_path: str, *, days: float, goal: int, json_path: Optional[str]) -> int:
+    """基準（貢献利益・ROI・照合の下限）は変えずに、保存済みの出品とeBay相場で候補を数え直す。"""
+    import json
+
+    from rich.table import Table
+
+    from . import db
+    from .genre_value import genre_values
+
+    cfg = load_config(cfg_path)
+    con = db.connect(cfg.app.db_path)
+    db.migrate(con)
+    rows = genre_values(cfg, con, days=days)
+    con.close()
+    urls = {h["url"] for r in rows for h in r["hits"]}
+    keys = ("listings", "excluded", "over_budget", "low_demand", "no_comp", "accessory", "below", "passed")
+    tot = {k: sum(r[k] for r in rows) for k in keys}
+    console = Console()
+    basis = {"sold": "売れた相場", "pooled": "同カテゴリ", "active": "暫定", None: "相場なし"}
+    t = Table(title=f"仕入れ候補の診断（直近{days:g}日の取得結果・基準は現在のまま）")
+    for c in ("ジャンル", "相場", "出品", "除外", "上限超", "需要不足", "相場なし", "付属品疑い", "基準未満", "候補"):
+        t.add_column(c, justify="left" if c in ("ジャンル", "相場") else "right")
+    for r in rows:
+        t.add_row(r["name"], basis[r["basis"]], *(str(r[k]) for k in keys))
+    t.add_row("[b]合計[/b]", "", *(f"[b]{tot[k]}[/b]" for k in keys))
+    console.print(t)
+    n = len(urls)
+    console.print(f"[bold]候補 {n}件 / 目標 {goal}件[/bold]（{'達成' if n >= goal else f'あと{goal - n}件'}。同じ出品が複数ジャンルに出た分は1件と数える）")
+    no_market = [r["name"] for r in rows if r["basis"] is None]
+    if no_market:
+        console.print(f"[yellow]eBayの売れた相場がないジャンル（{len(no_market)}）: {'、'.join(no_market)}[/yellow]")
+        console.print("  → 「eBay相場の取り込み」画面から、普段のChromeで売れた商品のページを送ると候補になります（人の作業）")
+    misses = sorted((m | {"genre": r["name"]} for r in rows for m in r["misses"]), key=lambda m: -m["best_score"])[:15]
+    if misses:
+        console.print(f"\n相場なしのうち、eBayの成約に近かった出品（照合のしきい値 {cfg.thresholds.match_threshold}）:")
+        for m in misses:
+            console.print(f"  {m['best_score']:.2f} [{m['genre']}] {m['title']}  ⇔  {m['best_comp']}")
+    if json_path:
+        with open(json_path, "w", encoding="utf-8") as fh:
+            json.dump({"candidates": n, "goal": goal, "totals": tot, "genres": rows}, fh, ensure_ascii=False, indent=1)
+    return 0
+
+
 def main() -> int:
     args = build_parser().parse_args()
     cfg_path: str = args.config
 
     if args.cmd == "doctor":
         return run_doctor(cfg_path)
+
+    if args.cmd == "diagnose":
+        return run_diagnose(cfg_path, days=args.days, goal=args.goal, json_path=args.json)
 
     if args.cmd == "value":
         return run_value(cfg_path, days=args.days, csv_path=args.csv)

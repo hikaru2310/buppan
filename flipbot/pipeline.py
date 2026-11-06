@@ -114,6 +114,26 @@ def _cached_ebay(con, target: Target, max_age_hours: float, manual_days: float =
     return row["captured_at"], items, meta.get("active_count")
 
 
+def _pooled_ebay(cfg: Config, con, target: Target) -> list[EbaySold]:
+    """このジャンルに売れた相場がないとき、同じカテゴリの別ジャンルで取り込んだ（期限内の）売れた相場をまとめて使う。
+    例: 「ニコン Ai レンズ（日本語表記）」に、「Nikon Ai / Ai-s レンズ」で取り込んだ成約を使う。
+    どの成約を相場に使うかは、通常どおり照合（型番・焦点距離・F値など）で1品ごとに決まる。"""
+    if not target.category:
+        return []
+    out: list[EbaySold] = []
+    seen: set[str] = set()
+    for t in cfg.all_targets:
+        if t.id == target.id or t.category != target.category:
+            continue
+        cached = _cached_ebay(con, t, cfg.app.ebay_cache_hours, cfg.app.ebay_manual_days)
+        for it in (cached[1] if cached else []):
+            key = it.url or f"{it.title}|{it.total_usd}"
+            if key not in seen:
+                seen.add(key)
+                out.append(it)
+    return out
+
+
 def _ebay_api_sold(cfg: Config, con, target: Target) -> Optional[dict[str, Any]]:
     """Marketplace Insights（売れた商品）。未承認と分かったら24時間は呼ばない。結果は通常の成約データとして保存（キャッシュ対象）。"""
     from .ebay_api import EbayApi, EbayApiError
@@ -397,6 +417,12 @@ async def crawl_target_once(cfg: Config, target: Target, session=None, *, fetch_
                 )
                 con.commit()
 
+        # 売れた相場がなければ、同じカテゴリの別ジャンルで取り込んだ売れた相場を使う（出品中の価格は使わない）
+        if not ebay_items:
+            pooled = _pooled_ebay(cfg, con, target)
+            if pooled:
+                ebay_items, ebay_cached_at, ebay_block = pooled, "pooled", None
+
         # 出品中（競合）の件数と価格：公式API（Browse）で取る
         act = _ebay_api_active(cfg, con, target)
         if act:
@@ -540,6 +566,7 @@ def rank_target(
     plan: Optional[dict[str, Any]] = None,
     active_count: Optional[int] = None,
     provisional: bool = False,
+    pooled: bool = False,
 ) -> tuple[list[Candidate], RankStats]:
     th = cfg.thresholds
     learned = Learned(con, target.id)
@@ -556,7 +583,8 @@ def rank_target(
     stats = RankStats()
     out: list[Candidate] = []
     # 需要の下限（0001_sedori の min_sold_count）：eBayで売れていないジャンルは候補にしない
-    low_demand = len(ebay_items) < th.min_sold_count
+    #   同じカテゴリの相場を借りた場合（pooled）は、1品ごとに照合で一致した成約が下限件数以上あることを求める
+    low_demand = not pooled and len(ebay_items) < th.min_sold_count
     cap = max_buy_for(cfg, target)
     for it in mercari_items:
         if it.status != "on_sale":
@@ -581,6 +609,13 @@ def rank_target(
             continue
         comps = learned.filter(it.title, find_comps(it.title, ebay_items, title_of=lambda e: e.title, threshold=th.match_threshold))
         comps, comp_note = select_comps(comps, it.condition_id, th.min_comps)
+        item_dem = dem
+        if pooled:
+            if len(comps) < th.min_sold_count:
+                stats.low_demand += 1
+                continue
+            item_dem = demand([c.item for c in comps], active_count)
+            comp_note = f"{comp_note}・同じカテゴリの別ジャンルで取り込んだ成約から照合"
         if provisional:
             comp_note = f"暫定相場：売れた価格ではなく、出品中の価格×{cfg.ebay_api.active_discount:.0%}"
         market = market_price([c.item.total_usd for c in comps], min_samples=th.min_comps)
@@ -633,9 +668,9 @@ def rank_target(
                 condition=CONDITION_LABELS.get(it.condition_id) if it.condition_id else None,
                 is_shop=it.is_shop,
                 listed_at=it.listed_at,
-                demand_count=len(ebay_items),
+                demand_count=len(comps) if pooled else len(ebay_items),
                 is_master=target.is_master,
-                demand=dem,
+                demand=item_dem,
                 comp_note=comp_note,
                 plan_sell60=plan_sell60,
                 limit_price_jpy=max(est.breakeven_buy_jpy - min_profit, 0),
@@ -756,6 +791,7 @@ async def scan_all(
     collected: list[tuple[Target, list[MercariListing], list[EbaySold]]] = []
     actives: dict[str, Optional[int]] = {}
     provisional: set[str] = set()  # 出品中の価格から作った暫定相場のジャンル
+    pooled: set[str] = set()  # 同じカテゴリの別ジャンルの売れた相場を使ったジャンル
 
     targets = select_targets(con, cfg, rotate=rotate)
     paused_until = db.get_setting(con, "mercari_pause_until")
@@ -793,6 +829,8 @@ async def scan_all(
                 actives[t.id] = res["ebay"].get("active_count")
                 if res["ebay"].get("cached_at") == "active":
                     provisional.add(t.id)
+                elif res["ebay"].get("cached_at") == "pooled":
+                    pooled.add(t.id)
                 if lazy.mercari_anomaly:
                     # 止められている兆候：残りのジャンルは取得せず、一定時間メルカリへのアクセスを止める
                     until = _pause_mercari(con, cfg, lazy.mercari_anomaly)
@@ -831,7 +869,8 @@ async def scan_all(
         mercari_count += len(m_items)
         ebay_count += len(e_items)
         cands, st = rank_target(cfg=cfg, target=t, mercari_items=m_items, ebay_items=e_items, con=con, plan=plan,
-                                active_count=actives.get(t.id), provisional=t.id in provisional)
+                                active_count=actives.get(t.id), provisional=t.id in provisional,
+                                pooled=t.id in pooled)
         all_cands.extend(cands)
         for k in asdict(st):
             setattr(total, k, getattr(total, k) + getattr(st, k))

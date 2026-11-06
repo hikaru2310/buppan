@@ -176,6 +176,44 @@ def test_manual_ebay_import_and_cache():
     assert r2.get("need_target"), "一致するジャンルがなければ選ばせる"
 
 
+def test_pooled_comps_same_category():
+    """売れた相場がないジャンルは、同じカテゴリの別ジャンルで取り込んだ成約を、照合を通して使う（基準は同じ）。"""
+    from flipbot.genre_value import genre_values
+    from flipbot.pipeline import _pooled_ebay, rank_target
+    from flipbot.scrape_mercari import MercariListing
+    cfg = make_cfg()
+    cfg.app.db_path = str(TMP / "pool.db")
+    con = con_for(cfg)
+    by = {t.id: t for t in cfg.all_targets}
+    src, dst, other = by["nikon-ai-lens"], by["nikon-ai-lens-ja"], by["3ds-console"]
+    for t in (src, dst, other):
+        db.upsert_target(con, t.id, t.name)
+    snap = db.create_snapshot(con, target_id=src.id, source="ebay", meta_json=json.dumps({"manual": True}))
+    sold = [("Nikon Nikkor 50mm f/1.4 Ai-s Lens", 400.0)] * 4 + [("Nikon Nikkor 28mm f/2.8 Ai-s Lens", 300.0)] * 2
+    con.executemany("INSERT INTO ebay_sold(snapshot_id, title, price_usd, shipping_usd, total_usd, url, ended_at, condition, sold_date) "
+                    "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [(snap.id, ti, p, 0, p, f"https://www.ebay.com/itm/p{i}", None, "used", "2026-10-20") for i, (ti, p) in enumerate(sold)])
+    con.commit()
+    pool = _pooled_ebay(cfg, con, dst)
+    assert len(pool) == 6 and not _pooled_ebay(cfg, con, other), "同じカテゴリだけを借りる"
+    items = [MercariListing("ニコン Nikkor 50mm F1.4 Ai-s レンズ", 20000, True, "on_sale", "https://jp.mercari.com/item/m1", "m1"),
+             MercariListing("ニコン Nikkor 28mm F2.8 Ai-s レンズ", 8000, True, "on_sale", "https://jp.mercari.com/item/m2", "m2")]
+    cands, st = rank_target(cfg=cfg, target=dst, mercari_items=items, ebay_items=pool, con=con, pooled=True)
+    ok = [c for c in cands if not c.near_miss]
+    assert [c.item_key for c in ok] == ["m1"] and st.low_demand == 1, (st, [c.item_key for c in cands])
+    assert ok[0].demand_count == 4 and "別ジャンル" in (ok[0].comp_note or "")
+    # 借りない場合（従来）は、このジャンルの成約がないので候補にならない
+    _, st0 = rank_target(cfg=cfg, target=dst, mercari_items=items, ebay_items=[], con=con)
+    assert st0.low_demand == 2
+    # 診断（DBを読むだけ）も同じ考え方で数える
+    ms = db.create_snapshot(con, target_id=dst.id, source="mercari", meta_json="{}")
+    con.executemany("INSERT INTO mercari_listings(snapshot_id, title, price_jpy, shipping_included, status, url, item_id) VALUES(?, ?, ?, ?, ?, ?, ?)",
+                    [(ms.id, i.title, i.price_jpy, 1, "on_sale", i.url, i.item_id) for i in items])
+    con.commit()
+    row = next(r for r in genre_values(cfg, con, days=1) if r["id"] == dst.id)
+    assert row["basis"] == "pooled" and row["passed"] == 1 and row["low_demand"] == 1, row
+
+
 def test_listing_draft():
     d = listing.draft({"sku": "2610-001", "title": "Nikon F3", "category": "カメラ・交換レンズ", "payload_json": json.dumps(_payload())})
     assert d["title"].startswith("[Exc+5]") and len(d["title"]) <= 80 and "Excellent" not in d["title"]

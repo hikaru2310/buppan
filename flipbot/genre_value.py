@@ -2,7 +2,8 @@
 
 監視価値（1日あたりの期待利益）＝ メルカリの新着/日 × 基準を満たす出品の割合 × 1件の利益（平均） × 購入成功率
 
-相場は eBay の売れた相場（手動取り込み・Insights）を優先し、なければ出品中の価格 × active_discount を「暫定」として使う。
+相場は eBay の売れた相場（手動取り込み・Insights）を優先し、なければ同じカテゴリの別ジャンルの売れた相場（pooled）、
+それもなければ出品中の価格 × active_discount を「暫定」として使う。
 """
 from __future__ import annotations
 
@@ -14,8 +15,8 @@ from . import fx as fx_mod
 from . import plan as plan_mod
 from .config import Config, Target
 from .market import select_comps
-from .matching import find_comps, market_price
-from .pipeline import Learned, _cached_ebay, _is_excluded, active_genres, max_buy_for, mercari_inflow
+from .matching import find_comps, market_price, match_score
+from .pipeline import Learned, _cached_ebay, _pooled_ebay, _is_excluded, active_genres, max_buy_for, mercari_inflow
 from .profit import estimate_profit
 from .scrape_ebay import EbaySold
 
@@ -63,8 +64,11 @@ def genre_value(cfg: Config, con, target: Target, *, plan: dict[str, Any], inflo
 
     cached = _cached_ebay(con, target, cfg.app.ebay_cache_hours, cfg.app.ebay_manual_days)
     active_items, active_total = _active_comps(cfg, con, target.id)
+    pooled = [] if (cached and cached[1]) else _pooled_ebay(cfg, con, target)
     if cached and cached[1]:
         basis, comps_pool, sold_n = "sold", cached[1], len(cached[1])
+    elif pooled:
+        basis, comps_pool, sold_n = "pooled", pooled, None
     elif active_items:
         basis, comps_pool, sold_n = "active", active_items, None
     else:
@@ -73,7 +77,9 @@ def genre_value(cfg: Config, con, target: Target, *, plan: dict[str, Any], inflo
     items = _mercari_window(con, target.id, days)
     learned = Learned(con, target.id)
     cap = max_buy_for(cfg, target)
-    n = {"listings": len(items), "excluded": 0, "over_budget": 0, "no_comp": 0, "accessory": 0, "below": 0, "passed": 0}
+    n = {"listings": len(items), "excluded": 0, "over_budget": 0, "low_demand": 0, "no_comp": 0, "accessory": 0, "below": 0, "passed": 0}
+    misses: list[dict[str, Any]] = []  # 相場なしになった出品と、いちばん近かったeBayの成約（辞書・照合の改善の手がかり）
+    below: list[dict[str, Any]] = []  # 基準未満（参考）
     profits: list[int] = []
     hits: list[dict[str, Any]] = []
     prices = [r["price_jpy"] for r in items]
@@ -89,6 +95,13 @@ def genre_value(cfg: Config, con, target: Target, *, plan: dict[str, Any], inflo
         market = market_price([c.item.total_usd for c in comps], min_samples=th.min_comps)
         if market is None:
             n["no_comp"] += 1
+            if comps_pool:
+                best = max(comps_pool, key=lambda e: match_score(r["title"], e.title))
+                misses.append({"title": r["title"], "buy_jpy": r["price_jpy"], "matched": len(comps),
+                               "best_comp": best.title, "best_score": round(match_score(r["title"], best.title), 2)})
+            continue
+        if basis == "pooled" and len(comps) < th.min_sold_count:
+            n["low_demand"] += 1
             continue
         if th.min_price_ratio and r["price_jpy"] < market * cfg.fx.jpy_per_usd * th.min_price_ratio:
             n["accessory"] += 1
@@ -97,12 +110,17 @@ def genre_value(cfg: Config, con, target: Target, *, plan: dict[str, Any], inflo
                               mercari_title=r["title"], mercari_url=r["url"])
         if est.profit_jpy < min_profit or est.roi < min_roi:
             n["below"] += 1
+            below.append({"title": r["title"], "buy_jpy": r["price_jpy"], "profit_jpy": est.profit_jpy, "roi": round(est.roi, 2)})
         else:
             n["passed"] += 1
             profits.append(est.profit_jpy)
             hits.append({"title": r["title"], "url": r["url"], "buy_jpy": r["price_jpy"], "market_usd": round(market, 2),
                          "profit_jpy": est.profit_jpy, "comp": comps[0].item.title, "comp_score": comps[0].score, "comps_n": len(comps)})
 
+    if basis == "sold" and sold_n is not None and sold_n < th.min_sold_count:
+        # スキャン本体と同じく、そのジャンルの成約件数が下限未満なら候補にしない
+        n["low_demand"] += n["passed"]
+        n["passed"], profits, hits = 0, [], []
     considered = n["listings"] - n["excluded"]
     f = inflow.get(target.id) or {}
     per_day = (f.get("per_hour") or 0) * 24 if f.get("per_hour") is not None else None
@@ -118,6 +136,8 @@ def genre_value(cfg: Config, con, target: Target, *, plan: dict[str, Any], inflo
         "pass_rate": pass_rate, "avg_profit_jpy": int(avg_profit), "min_profit_jpy": min_profit,
         "value_per_day_jpy": int(value) if value is not None else None,
         "hits": sorted(hits, key=lambda h: -h["profit_jpy"]),
+        "misses": sorted(misses, key=lambda m: -m["best_score"])[:10],
+        "below_items": sorted(below, key=lambda b: -b["profit_jpy"])[:5],
     }
 
 
