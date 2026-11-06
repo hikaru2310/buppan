@@ -396,6 +396,16 @@ def test_forecast_until_final_target():
     assert ai_runner.can_run(t) is None
 
 
+def test_mercari_loading_skeleton():
+    """商品の枠だけの読み込み途中ページは「0件」ではなく、読み込み待ちとして扱う。"""
+    from flipbot.scrape_mercari import is_loading_skeleton
+
+    skel = '<ul>' + '<li data-testid="item-cell"><div><span></span></div></li>' * 5 + '</ul>'
+    full = '<li data-testid="item-cell"><a href="/item/m123"><span data-testid="thumbnail-item-name">Nikon F3</span>' \
+           '<span data-testid="price">¥12,000</span></a></li>'
+    assert is_loading_skeleton(skel) and not is_loading_skeleton(full) and not is_loading_skeleton("<p>該当なし</p>")
+
+
 def main() -> int:
     tests = [v for k, v in globals().items() if k.startswith("test_")]
     ng = 0

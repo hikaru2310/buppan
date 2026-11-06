@@ -121,6 +121,13 @@ def _parse_legacy(soup: BeautifulSoup) -> list[MercariListing]:
     return listings
 
 
+def is_loading_skeleton(html: str) -> bool:
+    """一覧の枠（item-cell）だけ出ていて、中身（商品リンク）がまだ描画されていない読み込み途中のページ。"""
+    soup = BeautifulSoup(html, "lxml")
+    cells = soup.select('[data-testid="item-cell"]')
+    return bool(cells) and not any(c.select_one('a[href*="/item/"], a[href*="/shops/product/"]') for c in cells)
+
+
 def parse_mercari_search_html(html: str) -> list[MercariListing]:
     """Mercari のマークアップは頻繁に変わるので、新旧どちらでも拾えるようにしている。"""
     soup = BeautifulSoup(html, "lxml")

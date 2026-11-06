@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import json
 import re as _re_mod
 from dataclasses import asdict, dataclass
@@ -34,6 +35,7 @@ from .scrape_mercari import (
     MercariListing,
     build_mercari_keyword_url,
     build_mercari_search_url,
+    is_loading_skeleton,
     parse_mercari_search_html,
 )
 
@@ -311,6 +313,20 @@ async def _mercari_items(cfg: Config, target: Target, lazy: "LazySession") -> tu
     url = build_mercari_search_url(target.mercari_query)
     html, status = await fetch_html_status(session.page, url, scroll_steps=cfg.app.mercari_scroll_steps)
     items = parse_mercari_search_html(html)
+    # 読み込みが遅く、商品の枠だけのページを読んでしまうことがある → 中身が出るまで待ち、だめなら1回だけ読み直す
+    for attempt in range(2):
+        if items or not is_loading_skeleton(html):
+            break
+        try:
+            if attempt == 0:
+                await session.page.wait_for_selector('[data-testid="item-cell"] a[href*="/item/"]', timeout=15_000)
+                html = await session.page.content()
+            else:
+                await asyncio.sleep(random.uniform(8, 15))
+                html, status = await fetch_html_status(session.page, url, scroll_steps=cfg.app.mercari_scroll_steps)
+        except PlaywrightError:
+            html = await session.page.content()
+        items = parse_mercari_search_html(html)
     block = detect_block("mercari", html, session.page.url)
     # 異常の検知（アクセスを止められている兆候）→ scan_all がメルカリ取得を一時停止する
     if status in (403, 429) or (status and status >= 500):
