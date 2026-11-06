@@ -228,11 +228,23 @@ function dueTasks(){
 }
 const AI_KINDS=["AI","AI＋人"];
 const isOpen=x=>!/完了|中止/.test(x["ステータス"]||"");
+const hm=t=>t?new Date(t).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}):"";
+let openRun=null;
+const aiBusy=()=>(S.ai?.runs||[]).find(r=>r.status==="running");
 function aiCell(x){
-  const k=x["実行区分"]||"", running=(S.ai?.runs||[]).some(r=>r.status==="running"&&r.task_id===x.ID);
+  const k=x["実行区分"]||"", runs=S.ai?.runs||[], last=runs.find(r=>r.task_id===x.ID), busy=aiBusy();
+  const mine=busy&&busy.task_id===x.ID;
   const badge=k?`<span class="badge ${k==="人"?"":"ok"}">${esc(k)}</span>`:'<span class="meta">未分類</span>';
-  const btn=AI_KINDS.includes(k)&&isOpen(x)&&S.ai?.available?`<button class="btn sm ${running?"":"dark"}" data-ai="${esc(x.ID)}" ${running?"disabled":""}>${running?"実行中…":"AIで実行"}</button>`:"";
-  return `${badge}${x["AIの担当範囲・人の作業"]?`<div class="mini">${esc(x["AIの担当範囲・人の作業"])}</div>`:""}${btn}`;
+  const label=mine?"実行中…":busy?"他のタスクを実行中":last?"もう一度AIで実行":"AIで実行";
+  const btn=AI_KINDS.includes(k)&&isOpen(x)&&S.ai?.available?`<button class="btn sm ${busy?"":"dark"}" data-ai="${esc(x.ID)}" ${busy?"disabled":""}>${label}</button>`:"";
+  const st=!last?"":last.status==="running"?`<div class="mini">${hm(last.started_at)} 開始・作業中</div>`
+    :`<div class="mini">${last.status==="done"?"完了":"失敗"} ${hm(last.finished_at)}・<a href="#" data-report="${esc(last.id)}">結果を見る</a></div>`;
+  return `${badge}${x["AIの担当範囲・人の作業"]?`<div class="mini">${esc(x["AIの担当範囲・人の作業"])}</div>`:""}${btn}${st}`;
+}
+function aiBanner(){
+  const b=aiBusy(); if(!b) return "";
+  const min=Math.max(0,Math.round((Date.now()-new Date(b.started_at))/60000));
+  return `<div class="card note" style="padding:12px 16px"><span class="spin"></span><b>AIが ${esc(b.task_id)}「${esc(b.task||"")}」を実行中です</b>（${hm(b.started_at)} 開始・${min}分経過）。終わると下の「AIの実行履歴」に報告が出ます。この画面は自動で更新されます。</div>`;
 }
 function aiRuns(){
   const a=S.ai||{}, runs=a.runs||[];
@@ -242,7 +254,7 @@ function aiRuns(){
   return `<div class="card"><div class="wide"><table><thead><tr><th>タスク</th><th>状態</th><th>開始</th><th>結果</th></tr></thead><tbody>
     ${runs.map(r=>`<tr><td class="wrap"><b>${esc(r.task_id)}</b> ${esc(r.task||"")}</td><td><span class="badge ${r.status==="done"?"ok":r.status==="failed"?"alert":""}">${st[r.status]||esc(r.status)}${r.timeout?"（時間切れ）":""}</span></td>
       <td class="mini">${esc((r.started_at||"").replace("T"," ").slice(0,16))}</td>
-      <td class="wrap">${r.report?`<details><summary>報告を見る</summary><pre style="white-space:pre-wrap;font-size:12px">${esc(r.report)}</pre></details>`:'<span class="meta">—</span>'}</td></tr>`).join("")}</tbody></table></div></div>
+      <td class="wrap">${r.report?`<details id="run-${esc(r.id)}" ${r.id===openRun?"open":""}><summary>報告を見る</summary><pre style="white-space:pre-wrap;font-size:12px">${esc(r.report)}</pre></details>`:'<span class="meta">—</span>'}</td></tr>`).join("")}</tbody></table></div></div>
     <div class="meta">AIはシートのステータスを書き換えません。報告を確認して、シートを更新してください。結果のファイルは data/ai_runs/、文書の成果物は docs/ai-tasks/ にあります。</div>`;
 }
 VIEWS.tasks=["上流 / 計画タスク",()=>{
@@ -259,6 +271,7 @@ VIEWS.tasks=["上流 / 計画タスク",()=>{
   + planBanner()
   + `<div class="chips"><span class="chip">全 <b>${all.length}</b></span><span class="chip">未完了 <b>${open_.length}</b></span><span class="chip ${overdue.length?"sample":""}">期限切れ <b>${overdue.length}</b></span><span class="chip">7日以内 <b>${soon.length}</b></span></div>`
   + `<div class="chips"><span class="meta">実行区分で絞り込み：</span>${[["","すべて"],["AI","AI"],["AI＋人","AI＋人"],["人","人"]].map(([k,l])=>`<button class="chip ${kind===k?"on":""}" data-kind="${k}">${l} <b>${k?byKind(k).length:all.length}</b></button>`).join("")}</div>`
+  + aiBanner()
   + h2("· 00","AIで実行できる未完了タスク",`${aiOpen.length}件・ボタンを押すとAI（Claude Code）がこのPCで作業します`)+tbl(aiOpen)
   + h2("· 01","期限切れ",`${overdue.length}件`)+tbl(overdue.slice(0,40))
   + h2("· 02","7日以内に期限",`${soon.length}件`)+tbl(soon)
@@ -272,8 +285,12 @@ VIEWS.tasks=["上流 / 計画タスク",()=>{
     const t=(S.plan.tasks||[]).find(x=>x.ID===b.dataset.ai); if(!t) return;
     if(!confirm(`${t.ID}「${t["タスク"]}」をAIで実行します。\n\nAIはこのPCでファイルの作成・ツールのコード変更・データの集計を行います（eBay・メルカリへのアクセス、購入、git push はしません）。\n数分〜数十分かかります。実行しますか？`)) return;
     b.disabled=true; b.textContent="開始中…";
-    const r=await (await post("/api/ai-task",{id:t.ID})).json(); toast(r.message); load();
+    const r=await (await post("/api/ai-task",{id:t.ID})).json();
+    if(r.ok) toast(r.message); else alert(r.message);
+    load();
   });
+  $$("[data-report]").forEach(a=>a.onclick=e=>{e.preventDefault(); openRun=a.dataset.report; render(); const d=document.getElementById("run-"+openRun); if(d) d.scrollIntoView({block:"start"})});
+  if(aiBusy()) setTimeout(()=>{if(view==="tasks"&&document.visibilityState==="visible") load()},10000);
 }];
 const TOOL_TASK={
   P10:"利益計算をユニットエコノミクスの費用構成（手数料・広告・送料・梱包・作業・返品為替引当）に改修。さらに海外手数料1.35%・米国関税（DDP）・換金スプレッドを追加",
