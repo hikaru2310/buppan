@@ -8,3 +8,4 @@ PyYAML>=6.0.2
 openpyxl>=3.1.0
 requests>=2.31
 cryptography>=41
+segno>=1.6

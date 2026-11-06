@@ -178,3 +178,16 @@ nav button .step{font-family:var(--mono);font-size:10px;color:var(--ink-4);margi
 td.wrap{white-space:normal;min-width:180px;font-size:12px}
 .mini{font-size:11.5px}
 @media (max-width:900px){.envcard .cols{grid-template-columns:1fr}}
+/* ---- スマホ（iPhone） ---- */
+@media (max-width:700px){
+  aside{position:sticky;top:0;z-index:20;flex-wrap:nowrap;overflow-x:auto;padding:8px 12px;border-right:0;border-bottom:1px solid var(--line);-webkit-overflow-scrolling:touch}
+  aside .navsec{display:none}
+  nav button{white-space:nowrap;flex:0 0 auto}
+  main{padding:0 12px 40px;min-width:0}
+  .kpis,.grid2,.grid3,.form,.bd{grid-template-columns:1fr}
+  .kpi{border-left:0}
+  .wide{overflow-x:auto}
+  h1{font-size:22px}
+  h2{flex-wrap:wrap;font-size:18px;gap:4px 8px}
+  h2 .sub{flex-basis:100%}
+}

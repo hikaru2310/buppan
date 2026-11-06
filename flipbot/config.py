@@ -151,6 +151,8 @@ class AppConfig(BaseModel):
     data_source: str = "live"
     # Web画面
     web_host: str = "127.0.0.1"
+    # iPhone等から同じWi-Fi内で開けるようにする（合言葉つき。合言葉は data/web_token に自動作成）
+    phone_access: bool = False
     web_port: int = 8000
     # 何時間以内に初めて見た出品を NEW とするか
     new_window_hours: int = 24

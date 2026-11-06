@@ -23,6 +23,8 @@ POST /api/ebay-import     eBayのCSV（注文・取引レポート）を取り�
 GET  /api/listing-draft?sku= 英語の出品下書き
 POST /api/ebay-page       普段のChromeから送られた eBay「売れた商品」ページを相場として取り込み {"html","url","target_id"?}
 POST /api/ai-task        計画タスクをAI（Claude Code）で実行 {"id": "P01"}
+GET  /login?t=          iPhone等からの初回ログイン（合言葉をCookieに保存）
+GET  /api/phone-qr.svg    iPhoneで開くためのQRコード（このMacからだけ）
 POST /api/settings        画面入力の設定値（現金残高など）{"cash_jpy": ...}
 GET  /api/queue.csv       仕入れキューを CSV で書き出し
 GET  /api/skus.csv        全SKU（在庫・取引）を CSV で書き出し
@@ -35,6 +37,8 @@ import csv
 import io
 import json
 import re
+import secrets
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -56,6 +60,39 @@ from .sources import sample_targets
 
 INDEX_HTML = Path(__file__).parent / "web" / "index.html"
 ENV_YAML = Path(__file__).parent / "knowledge" / "environment.yaml"
+TOKEN_FILE = Path("./data/web_token")
+
+
+def phone_token() -> str:
+    """iPhone等から開くときの合言葉。初回に作ってファイルに保存する（GitHubに上がらない data/ の中）。"""
+    try:
+        t = TOKEN_FILE.read_text().strip()
+        if t:
+            return t
+    except OSError:
+        pass
+    t = secrets.token_urlsafe(24)
+    TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    TOKEN_FILE.write_text(t)
+    TOKEN_FILE.chmod(0o600)
+    return t
+
+
+def lan_ip() -> Optional[str]:
+    """同じWi-Fiから見たこのMacのIPアドレス（通信はしない）。"""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 80))
+            return s.getsockname()[0]
+    except OSError:
+        return None
+
+
+def phone_url(cfg: Config, *, with_token: bool = True) -> Optional[str]:
+    ip = lan_ip()
+    if not (cfg.app.phone_access and ip):
+        return None
+    return f"http://{ip}:{cfg.app.web_port}/login?t={phone_token()}" if with_token else f"http://{ip}:{cfg.app.web_port}/"
 
 
 class AppState:
@@ -245,6 +282,7 @@ class AppState:
             "ebay_status": ebay_status,
             "ebay_api_state": api_state,
             "ai": ai_runner.summary(),
+            "phone": {"enabled": cfg.app.phone_access, "url": phone_url(cfg, with_token=False)},
             "mercari_pause": pause,
             "settings": {
                 "mercari_source": cfg.app.mercari_source,
@@ -563,9 +601,49 @@ def _make_handler(state: AppState):
         def _json(self, obj: Any, code: int = 200) -> None:
             self._send(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
 
+        def _local(self) -> bool:
+            return self.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
+        def _gate(self) -> bool:
+            """このMac以外（iPhone等）からは、合言葉のCookieがあるときだけ通す。"""
+            if self._local():
+                return True
+            cfg = state.cfg
+            if not cfg.app.phone_access:
+                self._send(403, "このPC以外からのアクセスは無効です".encode(), "text/plain; charset=utf-8")
+                return False
+            token = phone_token()
+            u = urlparse(self.path)
+            if u.path == "/login":
+                if secrets.compare_digest((parse_qs(u.query).get("t") or [""])[0], token):
+                    self.send_response(302)
+                    self.send_header("Set-Cookie", f"arbiter_token={token}; Max-Age=31536000; Path=/; HttpOnly; SameSite=Lax")
+                    self.send_header("Location", "/")
+                    self.end_headers()
+                else:
+                    self._send(403, "合言葉が違います。MacのArbiterで表示されるQRコードから開き直してください".encode(), "text/plain; charset=utf-8")
+                return False
+            cookies = dict(c.strip().split("=", 1) for c in (self.headers.get("Cookie") or "").split(";") if "=" in c)
+            if secrets.compare_digest(cookies.get("arbiter_token", ""), token):
+                return True
+            self._send(403, "MacのArbiter（設定 / ルール・前提）に表示されるQRコードをiPhoneのカメラで読み取って開いてください".encode(), "text/plain; charset=utf-8")
+            return False
+
         def do_GET(self) -> None:
+            if not self._gate():
+                return
             path = urlparse(self.path).path
-            if path in ("/", "/index.html"):
+            if path == "/api/phone-qr.svg":
+                import segno
+
+                url = phone_url(state.cfg) if self._local() else None
+                if not url:
+                    self._send(404, b"phone access is off", "text/plain")
+                    return
+                buf = io.BytesIO()
+                segno.make(url, error="m").save(buf, kind="svg", scale=5, border=2)
+                self._send(200, buf.getvalue(), "image/svg+xml")
+            elif path in ("/", "/index.html"):
                 self._send(200, INDEX_HTML.read_bytes(), "text/html; charset=utf-8")
             elif path.startswith("/static/"):
                 name = path[len("/static/"):]
@@ -600,6 +678,8 @@ def _make_handler(state: AppState):
                 self._send(404, b"not found", "text/plain")
 
         def do_POST(self) -> None:
+            if not self._gate():
+                return
             path = urlparse(self.path).path
             length = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(length) or b"{}") if length else {}
@@ -667,6 +747,8 @@ def _make_handler(state: AppState):
                 self._send(404, b"not found", "text/plain")
 
         def do_DELETE(self) -> None:
+            if not self._gate():
+                return
             u = urlparse(self.path)
             key = (parse_qs(u.query).get("key") or [""])[0]
             table = {"/api/queue": "purchase_queue", "/api/dismiss": "dismissed", "/api/purchased": "purchases"}.get(u.path)
@@ -726,6 +808,8 @@ def serve(cfg_path: str, *, source: Optional[str] = None, port: Optional[int] = 
     state = AppState(cfg_path, source)
     cfg = state.cfg
     host, port = cfg.app.web_host, port or cfg.app.web_port
+    if cfg.app.phone_access:
+        host = "0.0.0.0"  # 同じWi-Fiから開けるように。このMac以外は合言葉が必要
     _daily_tasks(state)
     if initial_scan:
         state.start_scan()
@@ -733,7 +817,9 @@ def serve(cfg_path: str, *, source: Optional[str] = None, port: Optional[int] = 
     if interval > 0:
         threading.Thread(target=_auto_scan_loop, args=(state, interval), daemon=True).start()
     httpd = ThreadingHTTPServer((host, port), _make_handler(state))
-    console.print(f"[bold green]Web画面: http://{host}:{port}/[/bold green]  （Ctrl+C で終了）")
+    console.print(f"[bold green]Web画面: http://127.0.0.1:{port}/[/bold green]  （Ctrl+C で終了）")
+    if cfg.app.phone_access:
+        console.print(f"iPhoneから: {phone_url(cfg, with_token=False)}（初回は画面「設定 / ルール・前提」のQRコードから）")
     if interval > 0:
         console.print(f"自動スキャン: {interval // 60}分おき（config.yaml の app.auto_scan_minutes で変更。0で停止）")
     try:

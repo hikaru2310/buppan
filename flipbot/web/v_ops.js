@@ -178,11 +178,22 @@ VIEWS.ledger=["実務4 着金・精算 / SKU台帳",()=>{
 },()=>{const s=$("#ledgerSt"); if(s) s.onchange=()=>{localSet("ledgerSt",s.value);render()}}];
 
 // ---------- ルール・前提
+function phoneCard(){
+  const p=S.phone||{}, onMac=["127.0.0.1","localhost"].includes(location.hostname);
+  if(!onMac) return "";
+  if(!p.enabled) return h2("§","iPhoneで開く","オフ")+`<div class="card note">iPhoneから開くには config.local.yaml の app に <code>phone_access: true</code> を書いて再起動します。</div>`;
+  return h2("§","iPhoneで開く","同じWi-Fiにつないだ iPhone のカメラで読み取ってください")
+    + `<div class="card" style="padding:14px 18px;display:flex;gap:18px;align-items:center;flex-wrap:wrap">
+      <img src="/api/phone-qr.svg" alt="iPhoneで開くQRコード" style="width:180px;height:180px;background:#fff">
+      <div class="meta">1. iPhone を Mac と同じWi-Fiにつなぐ<br>2. カメラでQRコードを読み取り、表示されたリンクを開く<br>3. Safari の共有ボタン →「ホーム画面に追加」でアプリのように使えます<br><br>
+      アドレス：${esc(p.url||"—")}<br>QRコードには合言葉が入っています。他人に見せないでください。Wi-Fiの外（外出先）からは開けません。</div></div>`;
+}
 VIEWS.rules=["設定 / ルール・前提",()=>{
   const r=S.rules, f=r.fees||{}, th=r.thresholds||{}, c=S.costs||{};
   const row=(l,s,v)=>`<div class="r"><div>${l}<span>${s}</span></div><b>${v}</b></div>`;
   return h1("利益計算と判断の前提を、すべて見える場所に。","値は config.yaml（GitHubで編集可）で変更し、「再スキャン」で全候補の並びに反映されます。計画値（下限利益・リスク閾値など）は計画シートが正本です。")
   + planBanner()
+  + phoneCard()
   + h2("§","資金（画面から入力）","リスク「資金不足（自由現金300万円未満）」の判定に使います")
   + `<div class="card rules"><div class="r"><div>現在の現金残高（自由現金）<span>銀行残高 − 税金準備金。月次締めのたびに更新</span></div>
       <div class="form-inline"><input id="cashIn" type="number" value="${S.ops.cash_jpy??""}" placeholder="円"><button class="btn sm" id="cashSave">保存</button></div></div></div>`
