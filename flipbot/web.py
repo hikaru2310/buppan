@@ -24,7 +24,7 @@ GET  /api/listing-draft?sku= 英語の出品下書き
 POST /api/ebay-page       普段のChromeから送られた eBay「売れた商品」ページを相場として取り込み {"html","url","target_id"?}
 POST /api/ai-task        計画タスクをAI（Claude Code）で実行 {"id": "P01"}
 GET  /login?t=          iPhone等からの初回ログイン（合言葉をCookieに保存）
-GET  /api/phone-qr.svg    iPhoneで開くためのQRコード（このMacからだけ）
+GET  /api/phone-qr.svg?net=lan|ts  iPhoneで開くためのQRコード（このMacからだけ。ts = Tailscale経由・外出先用）
 POST /api/settings        画面入力の設定値（現金残高など）{"cash_jpy": ...}
 GET  /api/queue.csv       仕入れキューを CSV で書き出し
 GET  /api/skus.csv        全SKU（在庫・取引）を CSV で書き出し
@@ -88,8 +88,20 @@ def lan_ip() -> Optional[str]:
         return None
 
 
-def phone_url(cfg: Config, *, with_token: bool = True) -> Optional[str]:
-    ip = lan_ip()
+def tailscale_ip() -> Optional[str]:
+    """Tailscale（外出先からつなぐ専用ネットワーク）でのこのMacのアドレス。入っていなければ None。"""
+    import subprocess
+
+    try:
+        out = subprocess.run(["ifconfig"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"inet (100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+)", out)
+    return m.group(1) if m else None
+
+
+def phone_url(cfg: Config, *, with_token: bool = True, net: str = "lan") -> Optional[str]:
+    ip = tailscale_ip() if net == "ts" else lan_ip()
     if not (cfg.app.phone_access and ip):
         return None
     return f"http://{ip}:{cfg.app.web_port}/login?t={phone_token()}" if with_token else f"http://{ip}:{cfg.app.web_port}/"
@@ -282,7 +294,8 @@ class AppState:
             "ebay_status": ebay_status,
             "ebay_api_state": api_state,
             "ai": ai_runner.summary(),
-            "phone": {"enabled": cfg.app.phone_access, "url": phone_url(cfg, with_token=False)},
+            "phone": {"enabled": cfg.app.phone_access, "url": phone_url(cfg, with_token=False),
+                      "ts_url": phone_url(cfg, with_token=False, net="ts")},
             "mercari_pause": pause,
             "settings": {
                 "mercari_source": cfg.app.mercari_source,
@@ -636,7 +649,8 @@ def _make_handler(state: AppState):
             if path == "/api/phone-qr.svg":
                 import segno
 
-                url = phone_url(state.cfg) if self._local() else None
+                net = (parse_qs(urlparse(self.path).query).get("net") or ["lan"])[0]
+                url = phone_url(state.cfg, net=net) if self._local() else None
                 if not url:
                     self._send(404, b"phone access is off", "text/plain")
                     return
@@ -820,6 +834,8 @@ def serve(cfg_path: str, *, source: Optional[str] = None, port: Optional[int] = 
     console.print(f"[bold green]Web画面: http://127.0.0.1:{port}/[/bold green]  （Ctrl+C で終了）")
     if cfg.app.phone_access:
         console.print(f"iPhoneから: {phone_url(cfg, with_token=False)}（初回は画面「設定 / ルール・前提」のQRコードから）")
+        if phone_url(cfg, with_token=False, net="ts"):
+            console.print(f"外出先から（Tailscale）: {phone_url(cfg, with_token=False, net='ts')}")
     if interval > 0:
         console.print(f"自動スキャン: {interval // 60}分おき（config.yaml の app.auto_scan_minutes で変更。0で停止）")
     try:

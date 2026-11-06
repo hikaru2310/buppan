@@ -182,11 +182,13 @@ function phoneCard(){
   const p=S.phone||{}, onMac=["127.0.0.1","localhost"].includes(location.hostname);
   if(!onMac) return "";
   if(!p.enabled) return h2("§","iPhoneで開く","オフ")+`<div class="card note">iPhoneから開くには config.local.yaml の app に <code>phone_access: true</code> を書いて再起動します。</div>`;
-  return h2("§","iPhoneで開く","同じWi-Fiにつないだ iPhone のカメラで読み取ってください")
+  const qr=(net,label)=>`<div style="text-align:center"><img src="/api/phone-qr.svg?net=${net}" alt="${label}のQRコード" style="width:170px;height:170px;background:#fff"><div class="mini">${label}</div></div>`;
+  return h2("§","iPhoneで開く",p.ts_url?"自宅のWi-Fi用と、外出先用（Tailscale）の2つです":"同じWi-Fiにつないだ iPhone のカメラで読み取ってください")
     + `<div class="card" style="padding:14px 18px;display:flex;gap:18px;align-items:center;flex-wrap:wrap">
-      <img src="/api/phone-qr.svg" alt="iPhoneで開くQRコード" style="width:180px;height:180px;background:#fff">
+      ${qr("lan","自宅のWi-Fi")}${p.ts_url?qr("ts","外出先（Tailscale）"):""}
       <div class="meta">1. iPhone を Mac と同じWi-Fiにつなぐ<br>2. カメラでQRコードを読み取り、表示されたリンクを開く<br>3. Safari の共有ボタン →「ホーム画面に追加」でアプリのように使えます<br><br>
-      アドレス：${esc(p.url||"—")}<br>QRコードには合言葉が入っています。他人に見せないでください。Wi-Fiの外（外出先）からは開けません。</div></div>`;
+      自宅のWi-Fi：${esc(p.url||"—")}<br>外出先：${p.ts_url?esc(p.ts_url)+"（iPhoneのTailscaleをオンにして開く）":"Tailscale をこのMacに入れると、外出先用のQRコードが出ます"}<br>
+      QRコードには合言葉が入っています。他人に見せないでください。Macがスリープ中は開けません。</div></div>`;
 }
 VIEWS.rules=["設定 / ルール・前提",()=>{
   const r=S.rules, f=r.fees||{}, th=r.thresholds||{}, c=S.costs||{};
