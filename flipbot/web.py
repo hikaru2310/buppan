@@ -23,6 +23,7 @@ POST /api/ebay-import     eBayのCSV（注文・取引レポート）を取り�
 GET  /api/listing-draft?sku= 英語の出品下書き
 POST /api/ebay-page       普段のChromeから送られた eBay「売れた商品」ページを相場として取り込み {"html","url","target_id"?}
 POST /api/ai-task        計画タスクをAI（Claude Code）で実行 {"id": "P01"}
+POST /api/ai-publish     AIの成果物をGoogleドライブに保存し直す {"run_id": ...}
 GET  /login?t=          iPhone等からの初回ログイン（合言葉をCookieに保存）
 GET  /api/phone-qr.svg?net=lan|ts  iPhoneで開くためのQRコード（このMacからだけ。ts = Tailscale経由・外出先用）
 POST /api/settings        画面入力の設定値（現金残高など）{"cash_jpy": ...}
@@ -733,6 +734,8 @@ def _make_handler(state: AppState):
                 tasks = plan_mod.load(state.cfg, force=True).get("tasks") or []
                 task = next((t for t in tasks if t.get("ID") == body.get("id")), None)
                 self._json(ai_runner.start(task) if task else {"ok": False, "message": "シートにそのIDのタスクがありません"})
+            elif path == "/api/ai-publish":
+                self._json(ai_runner.publish_again(str(body.get("run_id", ""))))
             elif path == "/api/ebay-api-test":
                 from . import ebay_api
 

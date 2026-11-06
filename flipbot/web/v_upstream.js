@@ -238,8 +238,14 @@ function aiCell(x){
   const label=mine?"実行中…":busy?"他のタスクを実行中":last?"もう一度AIで実行":"AIで実行";
   const btn=AI_KINDS.includes(k)&&isOpen(x)&&S.ai?.available?`<button class="btn sm ${busy?"":"dark"}" data-ai="${esc(x.ID)}" ${busy?"disabled":""}>${label}</button>`:"";
   const st=!last?"":last.status==="running"?`<div class="mini">${hm(last.started_at)} 開始・作業中</div>`
-    :`<div class="mini">${last.status==="done"?"完了":"失敗"} ${hm(last.finished_at)}・<a href="#" data-report="${esc(last.id)}">結果を見る</a></div>`;
+    :`<div class="mini">${last.status==="done"?"完了":"失敗"} ${hm(last.finished_at)}・<a href="#" data-report="${esc(last.id)}">結果を見る</a>${last.doc_url?`・<a href="${esc(last.doc_url)}" target="_blank">ドキュメント</a>`:last.publish==="running"?"・Driveに保存中…":""}</div>`;
   return `${badge}${x["AIの担当範囲・人の作業"]?`<div class="mini">${esc(x["AIの担当範囲・人の作業"])}</div>`:""}${btn}${st}`;
+}
+function pubCell(r){
+  if(r.status!=="done") return "";
+  if(r.doc_url) return `<div class="mini"><a href="${esc(r.doc_url)}" target="_blank">Googleドキュメントを開く</a>（シートの「AI成果物」列にもリンク）</div>`;
+  if(r.publish==="running") return '<div class="mini"><span class="spin"></span>Googleドライブに保存中…</div>';
+  return `<div class="mini">${r.publish==="failed"?"Driveへの保存に失敗しました・":""}<a href="#" data-publish="${esc(r.id)}">Googleドライブに保存</a></div>`;
 }
 function aiBanner(){
   const b=aiBusy(); if(!b) return "";
@@ -254,7 +260,7 @@ function aiRuns(){
   return `<div class="card"><div class="wide"><table><thead><tr><th>タスク</th><th>状態</th><th>開始</th><th>結果</th></tr></thead><tbody>
     ${runs.map(r=>`<tr><td class="wrap"><b>${esc(r.task_id)}</b> ${esc(r.task||"")}</td><td><span class="badge ${r.status==="done"?"ok":r.status==="failed"?"alert":""}">${st[r.status]||esc(r.status)}${r.timeout?"（時間切れ）":""}</span></td>
       <td class="mini">${esc((r.started_at||"").replace("T"," ").slice(0,16))}</td>
-      <td class="wrap">${r.report?`<details id="run-${esc(r.id)}" ${r.id===openRun?"open":""}><summary>報告を見る</summary><pre style="white-space:pre-wrap;font-size:12px">${esc(r.report)}</pre></details>`:'<span class="meta">—</span>'}</td></tr>`).join("")}</tbody></table></div></div>
+      <td class="wrap">${pubCell(r)}${r.report?`<details id="run-${esc(r.id)}" ${r.id===openRun?"open":""}><summary>報告を見る</summary><pre style="white-space:pre-wrap;font-size:12px">${esc(r.report)}</pre></details>`:'<span class="meta">—</span>'}</td></tr>`).join("")}</tbody></table></div></div>
     <div class="meta">AIはシートのステータスを書き換えません。報告を確認して、シートを更新してください。結果のファイルは data/ai_runs/、文書の成果物は docs/ai-tasks/ にあります。</div>`;
 }
 VIEWS.tasks=["上流 / 計画タスク",()=>{
@@ -290,7 +296,8 @@ VIEWS.tasks=["上流 / 計画タスク",()=>{
     load();
   });
   $$("[data-report]").forEach(a=>a.onclick=e=>{e.preventDefault(); openRun=a.dataset.report; render(); const d=document.getElementById("run-"+openRun); if(d) d.scrollIntoView({block:"start"})});
-  if(aiBusy()) setTimeout(()=>{if(view==="tasks"&&document.visibilityState==="visible") load()},10000);
+  $$("[data-publish]").forEach(a=>a.onclick=async e=>{e.preventDefault(); a.textContent="保存を開始しています…"; const r=await (await post("/api/ai-publish",{run_id:a.dataset.publish})).json(); if(r.ok) toast(r.message); else alert(r.message); load()});
+  if(aiBusy()||(S.ai?.runs||[]).some(r=>r.publish==="running")) setTimeout(()=>{if(view==="tasks"&&document.visibilityState==="visible") load()},10000);
 }];
 const TOOL_TASK={
   P10:"利益計算をユニットエコノミクスの費用構成（手数料・広告・送料・梱包・作業・返品為替引当）に改修。さらに海外手数料1.35%・米国関税（DDP）・換金スプレッドを追加",

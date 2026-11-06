@@ -5,6 +5,8 @@
 - 同時に動くのは1件だけ。結果は data/ai_runs/ に保存し、画面で確認する
 - AIは eBay・メルカリへアクセスしない、購入・出品・送信をしない、git commit/push をしない
 - シートのステータスは書き換えない（人が結果を確認して更新する）
+- 終わったら成果物をGoogleドキュメントにしてDriveのフォルダに置き、シートの「AI成果物」列にリンクを書く
+  （Claude Code にログインしたアカウントの Google Drive / Sheets 連携を使う。ツール自身はGoogleの認証情報を持たない）
 """
 from __future__ import annotations
 
@@ -62,6 +64,26 @@ AIの担当範囲・人の作業: {AIの担当範囲・人の作業}
 ## シートのステータスの提案（完了／進行中／未着手のどれか、と理由）
 """
 
+PUBLISH_TOOLS = [
+    "Read", "ToolSearch", "mcp__claude_ai_Google_Drive__create_file",
+    "mcp__claude_ai_Google_Sheets__get_values", "mcp__claude_ai_Google_Sheets__update_values",
+]
+
+PUBLISH_PROMPT = """次の手順だけを行ってください。ほかの操作はしないでください。
+使うツールは ToolSearch で読み込んでください（Google Drive の create_file、Google Sheets の get_values と update_values）。
+
+1. ファイル {path} を Read で読む
+2. Google Drive の create_file で、その内容を Googleドキュメントとして作る
+   - title: {title}
+   - parentId: {folder}
+   - contentMimeType: text/markdown（失敗したら text/plain）
+   - textContent: 読んだ内容そのまま
+3. Google Sheets の get_values で、スプレッドシート {sheet} の範囲 'タスク管理'!A1:A500 を読み、A列が {task_id} の行番号を探す
+4. update_values で、その行の T列だけ（'タスク管理'!T<行番号>）に次の式を書く。ほかのセルは絶対に変えない
+   =HYPERLINK("<作ったドキュメントのURL>","{label}")
+5. 最後の行に、作ったドキュメントのURLだけを出力する
+"""
+
 _lock = threading.Lock()
 _procs: dict[str, subprocess.Popen] = {}
 
@@ -104,6 +126,52 @@ def build_prompt(task: dict[str, Any]) -> str:
 def command(prompt: str, exe: str) -> list[str]:
     return [exe, "-p", prompt, "--output-format", "json", "--permission-mode", "acceptEdits",
             "--allowedTools", *ALLOWED_TOOLS, "--disallowedTools", *DISALLOWED_TOOLS]
+
+
+def _cfg():
+    from .config import load_config
+
+    return load_config(ROOT / "config.yaml")
+
+
+def _publish_start(r: dict[str, Any], *, popen=subprocess.Popen, cfg=None) -> None:
+    """成果物（報告＋docs/ai-tasks/ID.md）を1つのMarkdownにまとめ、DriveとシートへのせるAIを起動する。"""
+    cfg = cfg or _cfg()
+    exe = claude_bin()
+    if not (cfg.ai_tasks.publish and cfg.ai_tasks.drive_folder_id and cfg.plan.sheet_id and exe):
+        return
+    doc = ROOT / "docs" / "ai-tasks" / f"{r['task_id']}.md"
+    body = f"# {r['task_id']} {r.get('task') or ''}\n\nAI実行: {r['id']}（{(r.get('finished_at') or '')[:16].replace('T', ' ')} UTC 完了）\n\n" \
+           f"## AIの報告\n\n{r.get('report') or ''}\n"
+    if doc.exists():
+        body += f"\n---\n\n## 成果物（docs/ai-tasks/{doc.name}）\n\n{doc.read_text(encoding='utf-8')}\n"
+    path = RUN_DIR / f"{r['id']}.publish.md"
+    path.write_text(body, encoding="utf-8")
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    prompt = PUBLISH_PROMPT.format(path=str(path.resolve()), title=f"{r['task_id']} {r.get('task') or ''}（AI成果物 {stamp}）",
+                                   folder=cfg.ai_tasks.drive_folder_id, sheet=cfg.plan.sheet_id, task_id=r["task_id"],
+                                   label=f"成果物 {stamp[5:]}")
+    out = open(RUN_DIR / f"{r['id']}.publish.json", "w", encoding="utf-8")
+    env = {**os.environ, "PATH": f"{Path(exe).parent}:{os.environ.get('PATH', '')}"}
+    proc = popen([exe, "-p", prompt, "--output-format", "json", "--allowedTools", *PUBLISH_TOOLS],
+                 cwd=str(ROOT), stdout=out, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, env=env)
+    _procs[r["id"] + ":publish"] = proc
+    r.update(publish="running", publish_pid=proc.pid, publish_ts=time.time())
+
+
+def _publish_finish(r: dict[str, Any], code: Optional[int]) -> None:
+    import re
+
+    text = ""
+    try:
+        text = str(json.loads((RUN_DIR / f"{r['id']}.publish.json").read_text(encoding="utf-8")).get("result") or "")
+    except Exception:  # noqa: BLE001
+        pass
+    m = re.findall(r"https://docs\.google\.com/document/d/[\w-]+[^\s)\]\"'>]*", text)
+    if m and code in (0, None):
+        r.update(publish="done", doc_url=m[-1])
+    else:
+        r.update(publish="failed", publish_error=text[-500:] or "Driveへの保存に失敗しました")
 
 
 def start(task: dict[str, Any], *, popen=subprocess.Popen) -> dict[str, Any]:
@@ -178,6 +246,23 @@ def poll() -> list[dict[str, Any]]:
             _finish(r, code)
             _procs.pop(r["id"], None)
             changed = True
+            if r["status"] == "done":
+                try:
+                    _publish_start(r)
+                except Exception as e:  # noqa: BLE001
+                    r.update(publish="failed", publish_error=str(e))
+    for r in runs:
+        if r.get("publish") != "running":
+            continue
+        proc = _procs.get(r["id"] + ":publish")
+        code = proc.poll() if proc else (None if _alive(r["publish_pid"]) else 0)
+        if code is None and time.time() - r.get("publish_ts", 0) > 10 * 60:
+            (proc.kill() if proc else os.kill(r["publish_pid"], 15))
+            code = -1
+        if code is not None:
+            _publish_finish(r, code)
+            _procs.pop(r["id"] + ":publish", None)
+            changed = True
     if changed:
         _save(runs)
     return runs[::-1]
@@ -186,4 +271,20 @@ def poll() -> list[dict[str, Any]]:
 def summary(limit: int = 20) -> dict[str, Any]:
     with _lock:
         runs = poll()
-    return {"available": bool(claude_bin()), "runs": [{k: v for k, v in r.items() if k not in ("started_ts", "pid")} for r in runs[:limit]]}
+    hide = ("started_ts", "pid", "publish_pid", "publish_ts")
+    return {"available": bool(claude_bin()), "runs": [{k: v for k, v in r.items() if k not in hide} for r in runs[:limit]]}
+
+
+def publish_again(run_id: str) -> dict[str, Any]:
+    """Driveへの保存をやり直す（失敗したとき・前に実行した分を戻すとき）。"""
+    with _lock:
+        runs = _load()
+        r = next((x for x in runs if x["id"] == run_id), None)
+        if not r or r["status"] != "done":
+            return {"ok": False, "message": "完了した実行が見つかりません"}
+        cfg = _cfg()
+        if not cfg.ai_tasks.drive_folder_id:
+            return {"ok": False, "message": "config.local.yaml の ai_tasks.drive_folder_id が未設定です"}
+        _publish_start(r, cfg=cfg)
+        _save(runs)
+    return {"ok": True, "message": "成果物をGoogleドライブに保存しています（1〜2分）"}

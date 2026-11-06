@@ -220,6 +220,14 @@ class Notify(BaseModel):
     app_url: str = "http://127.0.0.1:8000/"
 
 
+class AiTasks(BaseModel):
+    """「AIで実行」の結果の戻し先。"""
+    # 成果物をGoogleドキュメントにして置くDriveのフォルダID（config.local.yaml に書く）
+    drive_folder_id: Optional[str] = None
+    # 終わったら成果物をDriveに置き、計画シート「タスク管理」のAI成果物列にリンクを書く
+    publish: bool = True
+
+
 class Config(BaseModel):
     app: AppConfig = Field(default_factory=AppConfig)
     # genres と targets は同じもの。両方書いた場合は連結。
@@ -232,6 +240,7 @@ class Config(BaseModel):
     thresholds: Thresholds = Field(default_factory=Thresholds)
     notify: Notify = Field(default_factory=Notify)
     ebay_api: EbayApiConfig = Field(default_factory=EbayApiConfig)
+    ai_tasks: AiTasks = Field(default_factory=AiTasks)
     # カテゴリ別の除外語（全体 ＋ カテゴリ ＋ ジャンル の3階層でマージ）
     category_excludes: dict[str, list[str]] = Field(default_factory=dict)
     # 全ジャンル共通の除外語

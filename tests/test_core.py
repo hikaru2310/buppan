@@ -331,6 +331,9 @@ def test_ai_runner_start_and_finish():
     ai_runner.RUN_DIR = TMP / "ai_runs"
     ai_runner.INDEX = ai_runner.RUN_DIR / "index.json"
     ai_runner.claude_bin = lambda: "/bin/claude"
+    cfg = make_cfg()
+    cfg.ai_tasks.drive_folder_id, cfg.plan.sheet_id = None, None
+    ai_runner._cfg = lambda: cfg  # 保存先が未設定ならDriveへは送らない
     task = {"ID": "O04", "タスク": "カテゴリ別実現貢献利益を比較", "実行区分": "AI", "ステータス": "未着手"}
     assert ai_runner.can_run({**task, "実行区分": "人"}) and ai_runner.can_run({**task, "ステータス": "完了"})
     assert "O04" in ai_runner.build_prompt(task) and "git push" in ai_runner.build_prompt(task)
@@ -355,6 +358,27 @@ def test_ai_runner_start_and_finish():
     seen["proc"].code = 0
     run = ai_runner.summary()["runs"][0]
     assert run["status"] == "done" and "集計した" in run["report"] and run["task_id"] == "O04"
+    assert "publish" not in run
+
+    # 保存先があれば、終了後にDriveとシートへ戻すAIを起動し、URLを記録する
+    cfg.ai_tasks.drive_folder_id, cfg.plan.sheet_id = "FOLDER", "SHEET"
+    pub = {}
+
+    def fake_pub(cmd, **kw):
+        pub["prompt"] = cmd[2]
+        kw["stdout"].write(json.dumps({"result": "作りました\nhttps://docs.google.com/document/d/abc_123/edit"}))
+        kw["stdout"].flush()
+        return FakeProc()
+
+    runs = ai_runner._load()
+    r = runs[-1]
+    ai_runner._publish_start(r, popen=fake_pub, cfg=cfg)
+    ai_runner._save(runs)
+    assert "FOLDER" in pub["prompt"] and "SHEET" in pub["prompt"] and "T列だけ" in pub["prompt"]
+    assert "集計した" in (ai_runner.RUN_DIR / f"{r['id']}.publish.md").read_text(encoding="utf-8")
+    ai_runner._procs[r["id"] + ":publish"].code = 0
+    run = ai_runner.summary()["runs"][0]
+    assert run["publish"] == "done" and run["doc_url"] == "https://docs.google.com/document/d/abc_123/edit"
 
 
 def main() -> int:
