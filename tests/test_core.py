@@ -357,6 +357,76 @@ def test_ai_runner_start_and_finish():
     assert run["status"] == "done" and "集計した" in run["report"] and run["task_id"] == "O04"
 
 
+def test_ai_auto_run_and_human_tasks():
+    """「AI」は自動実行（開始日・依存・1日の上限・再実行しない）、「AI＋人」は終了後に人のタスクを追加。"""
+    from flipbot import ai_runner
+    from flipbot.config import AiConfig
+
+    ai_runner.RUN_DIR = TMP / "ai_runs2"
+    ai_runner.INDEX = ai_runner.RUN_DIR / "index.json"
+    ai_runner.HUMAN = ai_runner.RUN_DIR / "human_tasks.json"
+    ai_runner.claude_bin = lambda: "/bin/claude"
+    assert ai_runner.expand_ids("P07-P10, S01") == ["P07", "P08", "P09", "P10", "S01"] and ai_runner.expand_ids("-") == []
+    report = "## やったこと\n集計\n## 人が確認・対応すること\n- 税理士に処理ルールを確認する\n2. 証憑一覧を承認する\n## シートのステータスの提案\n進行中"
+    assert ai_runner.parse_human_items(report) == ["税理士に処理ルールを確認する", "証憑一覧を承認する"]
+    assert ai_runner.parse_human_items("## 人が確認・対応すること\n- なし\n") == []
+
+    tasks = [
+        {"ID": "P10", "タスク": "利益計算の改修", "実行区分": "AI＋人", "ステータス": "未着手", "期限": "2026-08-26", "依存タスク": "-"},
+        {"ID": "P11", "タスク": "確認項目の定義", "実行区分": "AI", "ステータス": "未着手", "期限": "2026-08-27", "依存タスク": "P10"},
+        {"ID": "P12", "タスク": "SKUルール", "実行区分": "AI", "ステータス": "未着手", "期限": "2026-08-28", "開始日": "2099-01-01"},
+        {"ID": "P13", "タスク": "KPI運用", "実行区分": "AI", "ステータス": "未着手", "期限": "2026-08-29", "優先度": "高"},
+        {"ID": "P14", "タスク": "人の作業", "実行区分": "人", "ステータス": "未着手", "期限": "2026-08-01"},
+    ]
+    cfg = AiConfig(auto_max_per_day=2)
+    procs = []
+
+    class FakeProc:
+        pid, code = 99999998, None
+
+        def poll(self):
+            return self.code
+
+    def fake_popen(cmd, **kw):
+        kw["stdout"].write(json.dumps({"result": report, "is_error": False}))
+        kw["stdout"].flush()
+        procs.append(FakeProc())
+        return procs[-1]
+
+    from datetime import date
+
+    today = date.today().isoformat()  # 1日の上限は実際の実行日で数える
+    # P11 は P10 待ち、P12 は開始日前、P14 は人 → P13 が自動で始まる
+    r = ai_runner.auto_tick(cfg, tasks, popen=fake_popen, today=today)
+    assert r and r["ok"] and r["run_id"].startswith("P13")
+    assert ai_runner.auto_tick(cfg, tasks, popen=fake_popen, today=today) is None  # 実行中は始めない
+    procs[-1].code = 0
+    # P13 は一度実行したので繰り返さない。P11 はまだ P10 待ち → 何もしない
+    assert ai_runner.auto_tick(cfg, tasks, popen=fake_popen, today=today) is None
+    assert not ai_runner.load_human()  # 「AI」だけのタスクでは人のタスクは作らない
+
+    # P10（AI＋人）を手動で実行 → 終了で人のタスクが2件
+    assert ai_runner.start(tasks[0], popen=fake_popen)["ok"]
+    procs[-1].code = 0
+    s = ai_runner.summary(ai_cfg=cfg, tasks=tasks)
+    hs = s["human"]
+    assert sorted(h["id"] for h in hs) == ["P10-H1", "P10-H2"] and all(h["parent"] == "P10" and not h["done"] for h in hs)
+    assert s["auto"]["next"] is None  # 人の作業が残っているので P11 はまだ
+    for h in hs:
+        assert ai_runner.set_human_done(h["id"])["ok"]
+    assert ai_runner.summary(ai_cfg=cfg, tasks=tasks)["auto"]["next"] == "P11"
+    r = ai_runner.auto_tick(cfg, tasks, popen=fake_popen, today=today)
+    assert r and r["run_id"].startswith("P11")
+    procs[-1].code = 0
+    # 1日の上限（2件）に達したので、ほかに候補があっても始めない
+    more = tasks + [{"ID": "P15", "タスク": "追加", "実行区分": "AI", "ステータス": "未着手"}]
+    assert ai_runner.auto_tick(cfg, more, popen=fake_popen, today=today) is None
+    assert ai_runner.auto_tick(AiConfig(auto_run=False), more, popen=fake_popen, today=today) is None
+    # 報告に人の作業が書かれていなくても「結果を確認する」を1件追加
+    assert ai_runner.add_human_tasks({"id": "x", "task_id": "P16", "task": "t"}, []) == ["P16-H1"]
+    assert ai_runner.load_human()[-1]["text"] == ai_runner.FALLBACK_HUMAN
+
+
 def main() -> int:
     tests = [v for k, v in globals().items() if k.startswith("test_")]
     ng = 0

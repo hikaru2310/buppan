@@ -23,6 +23,7 @@ POST /api/ebay-import     eBayのCSV（注文・取引レポート）を取り�
 GET  /api/listing-draft?sku= 英語の出品下書き
 POST /api/ebay-page       普段のChromeから送られた eBay「売れた商品」ページを相場として取り込み {"html","url","target_id"?}
 POST /api/ai-task        計画タスクをAI（Claude Code）で実行 {"id": "P01"}
+POST /api/human-task     AIのあとの人のタスクを完了／未完了にする {"id": "P10-H1", "done": true}
 GET  /login?t=          iPhone等からの初回ログイン（合言葉をCookieに保存）
 GET  /api/phone-qr.svg?net=lan|ts  iPhoneで開くためのQRコード（このMacからだけ。ts = Tailscale経由・外出先用）
 POST /api/settings        画面入力の設定値（現金残高など）{"cash_jpy": ...}
@@ -293,7 +294,7 @@ class AppState:
             "labels": labels,
             "ebay_status": ebay_status,
             "ebay_api_state": api_state,
-            "ai": ai_runner.summary(),
+            "ai": ai_runner.summary(ai_cfg=cfg.ai, tasks=plan.get("tasks") or []),
             "phone": {"enabled": cfg.app.phone_access, "url": phone_url(cfg, with_token=False),
                       "ts_url": phone_url(cfg, with_token=False, net="ts")},
             "mercari_pause": pause,
@@ -733,6 +734,8 @@ def _make_handler(state: AppState):
                 tasks = plan_mod.load(state.cfg, force=True).get("tasks") or []
                 task = next((t for t in tasks if t.get("ID") == body.get("id")), None)
                 self._json(ai_runner.start(task) if task else {"ok": False, "message": "シートにそのIDのタスクがありません"})
+            elif path == "/api/human-task":
+                self._json(ai_runner.set_human_done(str(body.get("id", "")), bool(body.get("done", True))))
             elif path == "/api/ebay-api-test":
                 from . import ebay_api
 
@@ -817,6 +820,24 @@ def _auto_scan_loop(state: "AppState", interval: int) -> None:
         state.next_scan_at = nxt()
 
 
+def _ai_auto_loop(state: "AppState") -> None:
+    """実行区分「AI」のタスクを、ボタンを押さなくても順に自動実行する（1件ずつ・1日の上限まで）。"""
+    import time
+
+    time.sleep(120)  # 起動直後のスキャンと重ならないように少し待つ
+    while True:
+        cfg = state.cfg
+        try:
+            if cfg.ai.auto_run:
+                tasks = plan_mod.load(cfg).get("tasks") or []
+                r = ai_runner.auto_tick(cfg.ai, tasks)
+                if r and not r.get("ok"):
+                    state.last_error = f"AIの自動実行を開始できませんでした: {r.get('message')}"
+        except Exception as e:  # noqa: BLE001
+            state.last_error = f"AIの自動実行でエラー: {e!r}"
+        time.sleep(max(int(cfg.ai.auto_interval_minutes), 5) * 60)
+
+
 def serve(cfg_path: str, *, source: Optional[str] = None, port: Optional[int] = None, initial_scan: bool = True) -> int:
     console = Console()
     state = AppState(cfg_path, source)
@@ -830,6 +851,8 @@ def serve(cfg_path: str, *, source: Optional[str] = None, port: Optional[int] = 
     interval = int(cfg.app.auto_scan_minutes) * 60
     if interval > 0:
         threading.Thread(target=_auto_scan_loop, args=(state, interval), daemon=True).start()
+    if cfg.ai.auto_run:
+        threading.Thread(target=_ai_auto_loop, args=(state,), daemon=True).start()
     httpd = ThreadingHTTPServer((host, port), _make_handler(state))
     console.print(f"[bold green]Web画面: http://127.0.0.1:{port}/[/bold green]  （Ctrl+C で終了）")
     if cfg.app.phone_access:
@@ -838,6 +861,9 @@ def serve(cfg_path: str, *, source: Optional[str] = None, port: Optional[int] = 
             console.print(f"外出先から（Tailscale）: {phone_url(cfg, with_token=False, net='ts')}")
     if interval > 0:
         console.print(f"自動スキャン: {interval // 60}分おき（config.yaml の app.auto_scan_minutes で変更。0で停止）")
+    if cfg.ai.auto_run:
+        console.print(f"AIタスクの自動実行: {cfg.ai.auto_interval_minutes}分ごとに確認・1日{cfg.ai.auto_max_per_day}件まで"
+                      "（config.yaml の ai.auto_run: false で停止）")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

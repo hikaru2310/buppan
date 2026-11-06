@@ -220,8 +220,19 @@ class Notify(BaseModel):
     app_url: str = "http://127.0.0.1:8000/"
 
 
+class AiConfig(BaseModel):
+    """計画タスクのAI実行（Claude Code）。"""
+
+    # 実行区分「AI」の未完了タスクを、ボタンを押さなくても順に自動実行する
+    auto_run: bool = True
+    auto_interval_minutes: int = 30  # 次の自動実行を探す間隔
+    auto_max_per_day: int = 3  # 1日に自動実行する上限（費用の上限として）
+    auto_kinds: list[str] = Field(default_factory=lambda: ["AI"])  # 自動実行する実行区分
+
+
 class Config(BaseModel):
     app: AppConfig = Field(default_factory=AppConfig)
+    ai: AiConfig = Field(default_factory=AiConfig)
     # genres と targets は同じもの。両方書いた場合は連結。
     genres: list[Target] = Field(default_factory=list)
     targets: list[Target] = Field(default_factory=list)

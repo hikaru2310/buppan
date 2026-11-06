@@ -237,14 +237,30 @@ function aiCell(x){
   const badge=k?`<span class="badge ${k==="人"?"":"ok"}">${esc(k)}</span>`:'<span class="meta">未分類</span>';
   const label=mine?"実行中…":busy?"他のタスクを実行中":last?"もう一度AIで実行":"AIで実行";
   const btn=AI_KINDS.includes(k)&&isOpen(x)&&S.ai?.available?`<button class="btn sm ${busy?"":"dark"}" data-ai="${esc(x.ID)}" ${busy?"disabled":""}>${label}</button>`:"";
-  const st=!last?"":last.status==="running"?`<div class="mini">${hm(last.started_at)} 開始・作業中</div>`
-    :`<div class="mini">${last.status==="done"?"完了":"失敗"} ${hm(last.finished_at)}・<a href="#" data-report="${esc(last.id)}">結果を見る</a></div>`;
-  return `${badge}${x["AIの担当範囲・人の作業"]?`<div class="mini">${esc(x["AIの担当範囲・人の作業"])}</div>`:""}${btn}${st}`;
+  const st=!last?"":last.status==="running"?`<div class="mini">${hm(last.started_at)} 開始・作業中${last.auto?"（自動）":""}</div>`
+    :`<div class="mini">${last.status==="done"?"完了":"失敗"}${last.auto?"（自動）":""} ${hm(last.finished_at)}・<a href="#" data-report="${esc(last.id)}">結果を見る</a></div>`;
+  const au=S.ai?.auto, hum=(S.ai?.human||[]).filter(h=>h.parent===x.ID), left=hum.filter(h=>!h.done).length;
+  const autoNote=!last&&au?.enabled&&(au.kinds||[]).includes(k)&&isOpen(x)?`<div class="mini">${au.next===x.ID?"<b>次に自動実行</b>":"自動実行の対象（開始日・依存タスクの完了待ち）"}</div>`:"";
+  const humNote=hum.length?`<div class="mini">人の作業 ${left?`<b>残り${left}件</b>`:"すべて完了"} / ${hum.length}件</div>`:"";
+  return `${badge}${x["AIの担当範囲・人の作業"]?`<div class="mini">${esc(x["AIの担当範囲・人の作業"])}</div>`:""}${btn}${autoNote}${st}${humNote}`;
 }
 function aiBanner(){
   const b=aiBusy(); if(!b) return "";
   const min=Math.max(0,Math.round((Date.now()-new Date(b.started_at))/60000));
   return `<div class="card note" style="padding:12px 16px"><span class="spin"></span><b>AIが ${esc(b.task_id)}「${esc(b.task||"")}」を実行中です</b>（${hm(b.started_at)} 開始・${min}分経過）。終わると下の「AIの実行履歴」に報告が出ます。この画面は自動で更新されます。</div>`;
+}
+function autoBanner(){
+  const au=S.ai?.auto; if(!au||!S.ai?.available) return "";
+  if(!au.enabled) return '<div class="chips"><span class="chip">AIのみのタスクの自動実行：<b>オフ</b>（config.yaml の ai.auto_run）</span></div>';
+  return `<div class="chips"><span class="chip">「${esc((au.kinds||[]).join("・"))}」のタスクは自動実行：<b>オン</b>（${au.interval_minutes}分ごとに確認・1日${au.max_per_day}件まで）</span><span class="chip">今日の自動実行 <b>${au.today}/${au.max_per_day}</b></span><span class="chip">次の候補 <b>${esc(au.next||"なし")}</b></span></div>`;
+}
+function humanTasks(){
+  const hs=S.ai?.human||[], open_=hs.filter(h=>!h.done), done=hs.filter(h=>h.done).slice(0,10);
+  if(!hs.length) return '<div class="card empty">まだありません。「AI＋人」のタスクをAIで実行すると、報告の「人が確認・対応すること」がここに追加されます</div>';
+  const row=h=>`<tr><td class="meta">${esc(h.id)}</td><td class="wrap">${h.done?`<s>${esc(h.text)}</s>`:`<b>${esc(h.text)}</b>`}<div class="meta">元のタスク：${esc(h.parent)} ${esc(h.parent_task||"")}・<a href="#" data-report="${esc(h.run_id)}">AIの報告</a></div></td>
+    <td class="mini">${hm(h.created_at)}</td><td>${h.done?`<span class="badge ok">完了 ${hm(h.done_at)}</span> <button class="btn sm" data-human="${esc(h.id)}" data-done="0">戻す</button>`:`<button class="btn sm dark" data-human="${esc(h.id)}" data-done="1">完了にする</button>`}</td></tr>`;
+  return `<div class="card"><div class="wide"><table><thead><tr><th>ID</th><th>人がやること</th><th>追加</th><th></th></tr></thead><tbody>${[...open_,...done].map(row).join("")}</tbody></table></div></div>
+    <div class="meta">人のタスクはツールに保存されます（シートには書き込みません）。元のタスクの人の作業がすべて完了すると、それを依存タスクにしているAIのタスクが自動実行の対象になります。</div>`;
 }
 function aiRuns(){
   const a=S.ai||{}, runs=a.runs||[];
@@ -252,7 +268,7 @@ function aiRuns(){
   if(!runs.length) return '<div class="card empty">まだAIで実行したタスクはありません</div>';
   const st={running:"実行中",done:"完了",failed:"失敗"};
   return `<div class="card"><div class="wide"><table><thead><tr><th>タスク</th><th>状態</th><th>開始</th><th>結果</th></tr></thead><tbody>
-    ${runs.map(r=>`<tr><td class="wrap"><b>${esc(r.task_id)}</b> ${esc(r.task||"")}</td><td><span class="badge ${r.status==="done"?"ok":r.status==="failed"?"alert":""}">${st[r.status]||esc(r.status)}${r.timeout?"（時間切れ）":""}</span></td>
+    ${runs.map(r=>`<tr><td class="wrap"><b>${esc(r.task_id)}</b> ${esc(r.task||"")}${r.auto?' <span class="badge">自動</span>':""}</td><td><span class="badge ${r.status==="done"?"ok":r.status==="failed"?"alert":""}">${st[r.status]||esc(r.status)}${r.timeout?"（時間切れ）":""}</span></td>
       <td class="mini">${esc((r.started_at||"").replace("T"," ").slice(0,16))}</td>
       <td class="wrap">${r.report?`<details id="run-${esc(r.id)}" ${r.id===openRun?"open":""}><summary>報告を見る</summary><pre style="white-space:pre-wrap;font-size:12px">${esc(r.report)}</pre></details>`:'<span class="meta">—</span>'}</td></tr>`).join("")}</tbody></table></div></div>
     <div class="meta">AIはシートのステータスを書き換えません。報告を確認して、シートを更新してください。結果のファイルは data/ai_runs/、文書の成果物は docs/ai-tasks/ にあります。</div>`;
@@ -267,11 +283,12 @@ VIEWS.tasks=["上流 / 計画タスク",()=>{
     ${list.map(x=>`<tr><td class="meta">${esc(x.ID)}</td><td class="wrap"><b>${esc(x["タスク"])}</b><div class="meta">${esc(x["フェーズ"])}・${esc(x["カテゴリ"])}</div></td><td class="wrap">${esc(x["成果物・完了条件"])}</td>
       <td class="${x["期限"]<today?"overdue":""}">${esc(x["期限"])}</td><td>${esc(x["優先度"])}</td><td class="mini">${esc(x["担当区分"])}${x["担当者"]?"・"+esc(x["担当者"]):""}</td><td>${esc(x["ステータス"])}</td><td class="wrap" style="min-width:150px">${aiCell(x)}</td></tr>`).join("")||'<tr><td colspan="8" class="empty">該当なし</td></tr>'}</tbody></table></div></div>`};
   const aiOpen=all.filter(x=>AI_KINDS.includes(x["実行区分"]||"")&&isOpen(x));
-  return h1("計画のアクションと、ツールの進み具合。","シート「タスク管理」を読み込んで、期限切れと今週の期限を出しています。実行区分が「AI」「AI＋人」のタスクは「AIで実行」でAI（Claude Code）に作業させられます。ステータスの更新は結果を確認してシートで行ってください（ツールはシートを書き換えません）。")
+  return h1("計画のアクションと、ツールの進み具合。","シート「タスク管理」を読み込んで、期限切れと今週の期限を出しています。実行区分が「AI」のタスクはボタンを押さなくてもAI（Claude Code）が順に自動実行し、「AI＋人」のタスクは「AIで実行」のあと、人がやることを人のタスクとして追加します。ステータスの更新は結果を確認してシートで行ってください（ツールはシートを書き換えません）。")
   + planBanner()
   + `<div class="chips"><span class="chip">全 <b>${all.length}</b></span><span class="chip">未完了 <b>${open_.length}</b></span><span class="chip ${overdue.length?"sample":""}">期限切れ <b>${overdue.length}</b></span><span class="chip">7日以内 <b>${soon.length}</b></span></div>`
   + `<div class="chips"><span class="meta">実行区分で絞り込み：</span>${[["","すべて"],["AI","AI"],["AI＋人","AI＋人"],["人","人"]].map(([k,l])=>`<button class="chip ${kind===k?"on":""}" data-kind="${k}">${l} <b>${k?byKind(k).length:all.length}</b></button>`).join("")}</div>`
-  + aiBanner()
+  + aiBanner() + autoBanner()
+  + h2("· 人","AIのあとに人がやること",`残り${(S.ai?.human||[]).filter(h=>!h.done).length}件`)+humanTasks()
   + h2("· 00","AIで実行できる未完了タスク",`${aiOpen.length}件・ボタンを押すとAI（Claude Code）がこのPCで作業します`)+tbl(aiOpen)
   + h2("· 01","期限切れ",`${overdue.length}件`)+tbl(overdue.slice(0,40))
   + h2("· 02","7日以内に期限",`${soon.length}件`)+tbl(soon)
@@ -286,6 +303,12 @@ VIEWS.tasks=["上流 / 計画タスク",()=>{
     if(!confirm(`${t.ID}「${t["タスク"]}」をAIで実行します。\n\nAIはこのPCでファイルの作成・ツールのコード変更・データの集計を行います（eBay・メルカリへのアクセス、購入、git push はしません）。\n数分〜数十分かかります。実行しますか？`)) return;
     b.disabled=true; b.textContent="開始中…";
     const r=await (await post("/api/ai-task",{id:t.ID})).json();
+    if(r.ok) toast(r.message); else alert(r.message);
+    load();
+  });
+  $$("[data-human]").forEach(b=>b.onclick=async()=>{
+    b.disabled=true;
+    const r=await (await post("/api/human-task",{id:b.dataset.human,done:b.dataset.done==="1"})).json();
     if(r.ok) toast(r.message); else alert(r.message);
     load();
   });
